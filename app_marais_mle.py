@@ -78,6 +78,11 @@ SOTE_m = st.sidebar.slider("Eficiência padrão (SOTE) por metro [%/m]", 4.0, 8.
 alfa = st.sidebar.slider("Fator α (transferência esgoto/água limpa)", 0.40, 0.85, 0.55, 0.05)
 beta = st.sidebar.slider("Fator β (saturação esgoto/água limpa)", 0.90, 1.00, 0.95, 0.01)
 F_incrust = st.sidebar.slider("Fator de incrustação dos difusores (F)", 0.70, 1.00, 0.85, 0.05)
+taxa_min_mistura = st.sidebar.number_input(
+    "Taxa mínima de mistura (ar difuso) [Nm³/min·1000m³]",
+    min_value=10.0, max_value=30.0, value=20.0, step=1.0,
+    help="Faixa típica de 20 a 30 Nm³/min por 1.000 m³ (Metcalf & Eddy, 5ª ed.) ou 1,2 a 1,8 Nm³/h·m² (ATV-DVWK-A 131)."
+)
 ef_soprador = st.sidebar.slider("Eficiência global do conjunto motor-soprador [%]", 55.0, 80.0, 68.0, 1.0) / 100.0
 perda_carga_ar = st.sidebar.number_input("Perda de carga tubulação + difusor [m.c.a.]", min_value=0.3, max_value=2.5, value=0.8, step=0.1)
 
@@ -174,49 +179,6 @@ FOd = (2.86 * Q * (Nc - Nne)) / 1000.0
 FOt = FOc + FOn - FOd
 Px_SST = MXt / tc
 
-# --- CÁLCULOS DE AERAÇÃO POR AR DIFUSO ---
-SOTE_total = min(0.55, (SOTE_m / 100.0) * submergencia)
-P_atm_rel = math.exp(-0.0001185 * altitude)
-Cs_20 = 9.08
-Cs_T = 14.652 - 0.41022 * T + 0.007991 * (T ** 2) - 0.000077774 * (T ** 3)
-Cs_T_H = Cs_T * P_atm_rel * (1.0 + (submergencia / 20.66))
-
-fator_correcao_O2 = (alfa * beta * F_incrust * ((Cs_T_H - OD_reator) / Cs_20) * (1.024 ** (T - 20)))
-AOTE = SOTE_total * fator_correcao_O2
-SOTR = FOt / fator_correcao_O2
-
-rho_ar = 1.20 * P_atm_rel
-frac_O2_ar = 0.232
-Q_ar_Nm3_d = FOt / (AOTE * rho_ar * frac_O2_ar)
-Q_ar_Nm3_h = Q_ar_Nm3_d / 24.0
-Q_ar_Nm3_min = Q_ar_Nm3_h / 60.0
-
-P1_kPa = 101.325 * P_atm_rel
-P2_kPa = P1_kPa + (submergencia + perda_carga_ar) * 9.806
-w_ar_kg_s = (Q_ar_Nm3_d * rho_ar) / 86400.0
-R_ar = 0.287
-T_ar_K = 293.15
-k_ar = 1.395
-n_ad = (k_ar - 1.0) / k_ar
-Potencia_kW = (w_ar_kg_s * R_ar * T_ar_K / (n_ad * ef_soprador)) * (((P2_kPa / P1_kPa) ** n_ad) - 1.0)
-Potencia_CV = Potencia_kW * 1.3596
-Consumo_kWh_d = Potencia_kW * 24.0
-
-# --- EFLUENTE TRATADO ---
-SST_ef = Xte
-DQO_sol = Susi
-DQO_part = SST_ef * fv * fcv
-DQO_ef = DQO_sol + DQO_part
-
-DBO_sol = 2.0
-DBO_part = 0.65 * SST_ef * fv
-DBO_ef = DBO_sol + DBO_part
-
-N_NH4_ef = Nae
-N_NO3_ef = Nne
-NT_ef = Nouse + Nae + Nne + (fn * SST_ef * fv)
-P_ef = max(0.5, Pti - ((fp * MXv * 1000.0) / (Q * tc)) + (fp * SST_ef * fv))
-
 # --- PRÉ-DIMENSIONAMENTO GEOMÉTRICO (MÚLTIPLOS DE 0,25 m) ---
 H_total = prof_util + borda_livre
 
@@ -244,8 +206,65 @@ Vt_real_total = Vaer_real_total + Vanox_real_total
 Area_planta_total = Area_aer_total + Area_anox_total
 TDH_real = (Vt_real_total / Q) * 24.0
 
-Taxa_ar_m2 = Q_ar_Nm3_h / Area_aer_total
-Taxa_ar_vol = Q_ar_Nm3_min / (Vaer_real_total / 1000.0)
+# --- CÁLCULOS DE AERAÇÃO POR AR DIFUSO (DEMANDA BIOLÓGICA VS. MISTURA MÍNIMA) ---
+SOTE_total = min(0.55, (SOTE_m / 100.0) * submergencia)
+P_atm_rel = math.exp(-0.0001185 * altitude)
+Cs_20 = 9.08
+Cs_T = 14.652 - 0.41022 * T + 0.007991 * (T ** 2) - 0.000077774 * (T ** 3)
+Cs_T_H = Cs_T * P_atm_rel * (1.0 + (submergencia / 20.66))
+
+fator_correcao_O2 = (alfa * beta * F_incrust * ((Cs_T_H - OD_reator) / Cs_20) * (1.024 ** (T - 20)))
+AOTE = SOTE_total * fator_correcao_O2
+SOTR = FOt / fator_correcao_O2
+
+rho_ar = 1.20 * P_atm_rel
+frac_O2_ar = 0.232
+
+# 1) Vazão de ar estritamente para demanda biológica (processo)
+Q_ar_demanda_Nm3_d = FOt / (AOTE * rho_ar * frac_O2_ar)
+Q_ar_demanda_Nm3_h = Q_ar_demanda_Nm3_d / 24.0
+Q_ar_demanda_Nm3_min = Q_ar_demanda_Nm3_h / 60.0
+
+# 2) Vazão de ar mínima requerida para mistura completa (sobre o volume aeróbio real construído)
+Q_ar_mistura_Nm3_min = taxa_min_mistura * (Vaer_real_total / 1000.0)
+Q_ar_mistura_Nm3_h = Q_ar_mistura_Nm3_min * 60.0
+Q_ar_mistura_Nm3_d = Q_ar_mistura_Nm3_h * 24.0
+
+# 3) Vazão de ar adotada no projeto (trava no maior valor entre demanda e mistura)
+governado_por_mistura = Q_ar_mistura_Nm3_h > Q_ar_demanda_Nm3_h
+Q_ar_projeto_Nm3_h = max(Q_ar_demanda_Nm3_h, Q_ar_mistura_Nm3_h)
+Q_ar_projeto_Nm3_min = Q_ar_projeto_Nm3_h / 60.0
+Q_ar_projeto_Nm3_d = Q_ar_projeto_Nm3_h * 24.0
+
+Taxa_ar_m2 = Q_ar_projeto_Nm3_h / Area_aer_total
+Taxa_ar_vol = Q_ar_projeto_Nm3_min / (Vaer_real_total / 1000.0)
+
+# Potência adiabática dos sopradores calculada sobre a vazão de projeto adotada
+P1_kPa = 101.325 * P_atm_rel
+P2_kPa = P1_kPa + (submergencia + perda_carga_ar) * 9.806
+w_ar_kg_s = (Q_ar_projeto_Nm3_d * rho_ar) / 86400.0
+R_ar = 0.287
+T_ar_K = 293.15
+k_ar = 1.395
+n_ad = (k_ar - 1.0) / k_ar
+Potencia_kW = (w_ar_kg_s * R_ar * T_ar_K / (n_ad * ef_soprador)) * (((P2_kPa / P1_kPa) ** n_ad) - 1.0)
+Potencia_CV = Potencia_kW * 1.3596
+Consumo_kWh_d = Potencia_kW * 24.0
+
+# --- EFLUENTE TRATADO ---
+SST_ef = Xte
+DQO_sol = Susi
+DQO_part = SST_ef * fv * fcv
+DQO_ef = DQO_sol + DQO_part
+
+DBO_sol = 2.0
+DBO_part = 0.65 * SST_ef * fv
+DBO_ef = DBO_sol + DBO_part
+
+N_NH4_ef = Nae
+N_NO3_ef = Nne
+NT_ef = Nouse + Nae + Nne + (fn * SST_ef * fv)
+P_ef = max(0.5, Pti - ((fp * MXv * 1000.0) / (Q * tc)) + (fp * SST_ef * fv))
 
 # --- ORGANIZAÇÃO EM ABAS ---
 aba_processo, aba_aeracao, aba_geometria, aba_cenarios = st.tabs([
@@ -312,10 +331,23 @@ with aba_aeracao:
         f"altitude de **{altitude:.0f} m** e concentração de OD mantida em **{OD_reator:.1f} mg/L**."
     )
 
+    if governado_por_mistura:
+        st.warning(
+            f"🔒 **Dimensionamento Governado pela Mistura Mínima:** A vazão de ar necessária apenas para a demanda biológica "
+            f"de oxigênio é de **{Q_ar_demanda_Nm3_h:,.0f} Nm³/h** ({Q_ar_demanda_Nm3_min:,.1f} Nm³/min), porém o mínimo requerido "
+            f"para manter os sólidos em suspensão no tanque aeróbio construído ({Vaer_real_total:,.0f} m³) é de "
+            f"**{Q_ar_mistura_Nm3_h:,.0f} Nm³/h** ({Q_ar_mistura_Nm3_min:,.1f} Nm³/min). O sistema foi travado no mínimo de mistura."
+        )
+    else:
+        st.success(
+            f"✅ **Dimensionamento Governado pela Demanda Biológica:** A vazão de ar requerida pelo processo "
+            f"(**{Q_ar_demanda_Nm3_h:,.0f} Nm³/h**) supera o mínimo exigido para mistura (**{Q_ar_mistura_Nm3_h:,.0f} Nm³/h**)."
+        )
+
     a1, a2, a3, a4 = st.columns(4)
-    a1.metric("Demanda Real (AOR / FOt)", f"{FOt:,.0f} kg O₂/d", f"Carbonácea: {FOc:,.0f} | Nitrif: {FOn:,.0f}")
-    a2.metric("Demanda Padrão (SOTR)", f"{SOTR:,.0f} kg O₂/d", f"Relação AOR/SOTR: {fator_correcao_O2:.2f}")
-    a3.metric("Vazão de Ar Requerida", f"{Q_ar_Nm3_h:,.0f} Nm³/h", f"{Q_ar_Nm3_min:,.1f} Nm³/min")
+    a1.metric("Demanda Real (AOR / FOt)", f"{FOt:,.0f} kg O₂/d", f"Padrão (SOTR): {SOTR:,.0f} kg O₂/d")
+    a2.metric("Vazão Ar (Demanda Biol.)", f"{Q_ar_demanda_Nm3_h:,.0f} Nm³/h", f"{Q_ar_demanda_Nm3_min:,.1f} Nm³/min")
+    a3.metric("Vazão Ar Adotada (Projeto)", f"{Q_ar_projeto_Nm3_h:,.0f} Nm³/h", "Travado na mistura" if governado_por_mistura else "Governado pelo processo")
     a4.metric("Potência dos Sopradores", f"{Potencia_kW:.1f} kW", f"{Potencia_CV:.1f} CV ({Consumo_kWh_d:,.0f} kWh/d)")
 
     st.divider()
@@ -334,12 +366,13 @@ with aba_aeracao:
 
     with col_aer_dir:
         st.markdown("#### Verificação de Mistura Mínima no Tanque Aeróbio")
-        st.metric("Taxa de Ar Específica por Volume", f"{Taxa_ar_vol:.1f} Nm³/min por 1.000 m³", "Mínimo recomendado: 20 Nm³/min·1000m³")
-        st.metric("Taxa de Ar Superficial", f"{Taxa_ar_m2:.2f} Nm³/h·m²", "Mínimo recomendado: 1,2 Nm³/h·m²")
-        if Taxa_ar_vol < 20.0:
-            st.warning("⚠️ A vazão de ar está abaixo do mínimo para manter os sólidos em suspensão (20 Nm³/min por 1.000 m³). O dimensionamento dos sopradores deve ser governado pela mistura.")
-        else:
-            st.success("✅ A vazão de ar de processo atende plenamente ao critério de mistura completa no tanque aeróbio.")
+        st.metric("Taxa Volumétrica Adotada", f"{Taxa_ar_vol:.1f} Nm³/min por 1.000 m³", f"Mínimo configurado: {taxa_min_mistura:.1f} Nm³/min·1000m³")
+        st.metric("Taxa Superficial Adotada", f"{Taxa_ar_m2:.2f} Nm³/h·m²", "Referência prática: ≥ 1,2 a 1,8 Nm³/h·m²")
+        st.caption(
+            "📚 **Referências técnicas:** Metcalf & Eddy (*Wastewater Engineering: Treatment and Resource Recovery*, 5ª ed., Cap. 8) "
+            "recomenda **20 a 30 Nm³/min por 1.000 m³** de tanque para difusores de bolha fina em mistura completa; "
+            "a norma alemã **ATV-DVWK-A 131** indica fluxo mínimo entre **1,2 e 1,8 Nm³/h·m²** de área de fundo."
+        )
 
 # ==============================================================================
 # ABA 3: PRÉ-DIMENSIONAMENTO GEOMÉTRICO
@@ -403,8 +436,8 @@ with aba_geometria:
 with aba_cenarios:
     st.subheader("⚖️ Salvar e Comparar Diferentes Cenários de Projeto")
     st.markdown(
-        "A tabela abaixo exibe os parâmetros operacionais, geométricos e de aeração. **Parâmetros cinéticos e de aeração "
-        "(como Yh, bh20, μnm20, α, SOTE) aparecem automaticamente como colunas extras sempre que você alterá-los entre um cenário e outro.**"
+        "A tabela abaixo compara **volumes, geometria, aeração e toda a qualidade do efluente tratado (DBO₅, DQO, SST, N-NH₄, N-NO₃, NT e P)**. "
+        "Além disso, parâmetros cinéticos e de aeração aparecem automaticamente como colunas extras sempre que você alterá-los entre um cenário e outro."
     )
 
     col_nome, col_btn_add, col_btn_clear = st.columns([2, 1, 1])
@@ -421,8 +454,6 @@ with aba_cenarios:
                 "Modo": "MLE (C + N)" if modo.startswith("Remoção") else "Apenas C",
                 "Q (L/s)": round(Q_Ls, 2),
                 "Q (m³/d)": round(Q, 1),
-                "DQO Af. (mg/L)": round(Sti, 0),
-                "NTK Af. (mg/L)": round(Nti, 0),
                 "T (°C)": T,
                 "OD (mg/L)": OD_reator,
                 "θc (dias)": round(tc, 1),
@@ -432,15 +463,23 @@ with aba_cenarios:
                 "Dim. Aeróbio (m)": f"{num_modulos}x({B_aer:.2f}x{L_aer:.2f})",
                 "Dim. Anóxico (m)": f"{num_modulos}x({B_anox:.2f}x{L_anox:.2f})" if Vanox > 0 else "-",
                 "AOR (kg O₂/d)": round(FOt, 0),
-                "SOTR (kg O₂/d)": round(SOTR, 0),
-                "Vazão Ar (Nm³/h)": round(Q_ar_Nm3_h, 0),
+                "Ar Demanda (Nm³/h)": round(Q_ar_demanda_Nm3_h, 0),
+                "Ar Projeto (Nm³/h)": round(Q_ar_projeto_Nm3_h, 0),
+                "Critério Ar": "Mistura Mín." if governado_por_mistura else "Demanda O₂",
                 "Potência (kW)": round(Potencia_kW, 1),
                 "Px Lodo (kg/d)": round(Px_SST, 0),
+                # Qualidade completa do efluente tratado para comparação
                 "DBO₅ Ef. (mg/L)": round(DBO_ef, 1),
+                "DQO Ef. (mg/L)": round(DQO_ef, 1),
+                "SST Ef. (mg/L)": round(SST_ef, 1),
                 "N-NH₄ Ef. (mg/L)": round(N_NH4_ef, 1),
                 "N-NO₃ Ef. (mg/L)": round(N_NO3_ef, 1),
                 "NT Ef. (mg/L)": round(NT_ef, 1),
+                "P Ef. (mg/L)": round(P_ef, 2),
                 "_params_extras": {
+                    "DQO Af. (mg/L)": round(Sti, 0),
+                    "NTK Af. (mg/L)": round(Nti, 0),
+                    "P Af. (mg/L)": round(Pti, 1),
                     "fbs": round(fbs, 2),
                     "fbp": round(fbp, 2),
                     "fus": round(fus, 2),
@@ -459,6 +498,7 @@ with aba_cenarios:
                     "SOTE (%/m)": round(SOTE_m, 1),
                     "Fator α": round(alfa, 2),
                     "Fator F": round(F_incrust, 2),
+                    "Taxa Mistura": round(taxa_min_mistura, 1),
                     "Submerg. (m)": round(submergencia, 2),
                     "Prof. H (m)": round(prof_util, 2),
                 }
@@ -474,7 +514,6 @@ with aba_cenarios:
             st.rerun()
 
     if st.session_state.cenarios:
-        # Filtra apenas cenários compatíveis com a estrutura atual (evita KeyError de sessões antigas)
         cenarios_validos = [c for c in st.session_state.cenarios if "_params_extras" in c]
         if len(cenarios_validos) != len(st.session_state.cenarios):
             st.session_state.cenarios = cenarios_validos
@@ -506,11 +545,11 @@ with aba_cenarios:
             st.markdown("**Volume Real Total (m³)**")
             st.bar_chart(df_cenarios.set_index("Cenário")[["Vt Real (m³)"]])
         with g2:
-            st.markdown("**Vazão de Ar (Nm³/h) e Potência (kW)**")
-            st.bar_chart(df_cenarios.set_index("Cenário")[["Vazão Ar (Nm³/h)", "Potência (kW)"]])
+            st.markdown("**Vazão de Ar Adotada (Nm³/h) e Potência (kW)**")
+            st.bar_chart(df_cenarios.set_index("Cenário")[["Ar Projeto (Nm³/h)", "Potência (kW)"]])
         with g3:
-            st.markdown("**Área Ocupada em Planta (m²)**")
-            st.bar_chart(df_cenarios.set_index("Cenário")[["Área Planta (m²)"]])
+            st.markdown("**Efluente Tratado: DBO₅, N-NH₄, N-NO₃ e NT (mg/L)**")
+            st.bar_chart(df_cenarios.set_index("Cenário")[["DBO₅ Ef. (mg/L)", "N-NH₄ Ef. (mg/L)", "N-NO₃ Ef. (mg/L)", "NT Ef. (mg/L)"]])
     else:
         st.info("Nenhum cenário salvo ainda. Clique em **'➕ Adicionar Cenário'** acima para começar a comparar.")
 
@@ -543,7 +582,10 @@ dados_export = [
     ("Demanda real de oxigênio (AOR / FOt)", round(FOt, 1), "kg O2/d"),
     ("Demanda padrão de oxigênio (SOTR)", round(SOTR, 1), "kg O2/d"),
     ("Eficiência transferência campo (AOTE)", round(AOTE * 100, 2), "%"),
-    ("Vazão de ar requerida", round(Q_ar_Nm3_h, 1), "Nm³/h"),
+    ("Vazão de ar (demanda biológica)", round(Q_ar_demanda_Nm3_h, 1), "Nm³/h"),
+    ("Vazão de ar mínima (mistura)", round(Q_ar_mistura_Nm3_h, 1), "Nm³/h"),
+    ("Vazão de ar adotada (projeto)", round(Q_ar_projeto_Nm3_h, 1), "Nm³/h"),
+    ("Critério governante da aeração", "Mistura Mínima" if governado_por_mistura else "Demanda Biológica", "-"),
     ("Potência estimada dos sopradores", round(Potencia_kW, 2), "kW"),
     ("Consumo energético aeração", round(Consumo_kWh_d, 1), "kWh/d"),
     ("Produção de lodo de excesso (Px)", round(Px_SST, 1), "kg SST/d"),
