@@ -58,8 +58,12 @@ if modo == "Remoção de Matéria Orgânica + N (MLE)":
     fxm = st.sidebar.slider("Fração mássica anóxica (fxm)", 0.00, 0.45, 0.30, 0.01)
     Sf = st.sidebar.slider("Fator de segurança nitrificação (Sf)", 1.10, 2.00, 1.35, 0.05)
     Na_alvo = st.sidebar.number_input("Amônia alvo para projeto (Na_alvo) [mg N/L]", min_value=0.5, value=1.5, step=0.1)
+    a_max = st.sidebar.slider("Limite máximo recirculação interna (a_max)", 1.0, 6.0, 4.0, 0.5)
+    OD_recirc_lodo = st.sidebar.number_input("OD no retorno de lodo (Os) [mg/L]", min_value=0.0, max_value=3.0, value=1.0, step=0.1)
 else:
     fxm = 0.0
+    a_max = 0.0
+    OD_recirc_lodo = 0.0
     tc_manual = st.sidebar.slider("Idade do lodo adotada (θc) [dias]", 2.0, 25.0, 5.0, 0.5)
     st.sidebar.info("Modo sem nitrificação: zona anóxica zerada (fxm = 0,00) e idade do lodo definida diretamente.")
 
@@ -71,7 +75,7 @@ rel_LB_aer = st.sidebar.selectbox("Relação Comprimento/Largura (L:B) - Zona Ae
 rel_LB_anox = st.sidebar.selectbox("Relação Comprimento/Largura (L:B) - Zona Anóxica", [1.0, 1.5, 2.0], index=0)
 
 st.sidebar.header("5. Sistema de Aeração (Ar Difuso)")
-OD_reator = st.sidebar.slider("OD desejado no tanque aeróbio (CL) [mg/L]", 1.0, 4.0, 2.0, 0.1)
+OD_reator = st.sidebar.slider("OD desejado no tanque aeróbio (Oa / CL) [mg/L]", 1.0, 4.0, 2.0, 0.1)
 altitude = st.sidebar.number_input("Altitude da ETE [m]", min_value=0.0, max_value=2500.0, value=900.0, step=50.0)
 submergencia = st.sidebar.number_input("Submergência dos difusores [m]", min_value=2.5, max_value=6.8, value=round(prof_util - 0.30, 2), step=0.10)
 SOTE_m = st.sidebar.slider("Eficiência padrão (SOTE) por metro [%/m]", 4.0, 8.0, 6.0, 0.2)
@@ -145,21 +149,56 @@ Ns = (fn * MXv * 1000.0) / (Q * tc)
 Nouse = 0.03 * Nti
 FOc = (Q * Sbi * (1 - fcv * Yh)) / 1000.0 + fcv * (1 - f) * bhT * MXbh
 
+# --- BALANÇO DE NITROGÊNIO, RECIRCULAÇÃO INTERNA (a) E EFEITO DO OD NA ZONA ANÓXICA ---
 if modo == "Remoção de Matéria Orgânica + N (MLE)":
     Nae = (KnT * (1 + bnT * tc)) / (unmT_efetivo * (1 - fxm) * tc - (1 + bnT * tc))
     Nc = max(0.0, Nti - Nouse - Nae - Ns)
     K2T = K2_20 * (1.08 ** (T - 20))
-    Dp1 = Sbsi * ((1 - fcv * Yh) / 2.86) + (K2T * fxm * MXbh * 1000.0) / Q
-    if fxm > 0:
-        a_calc = (Nc / max(2.0, Nc - Dp1)) - (1.0 + s)
-        a = min(4.0, max(1.0, a_calc))
-        Nne = Nc / (a + s + 1.0)
+
+    # Potencial bruto de desnitrificação (sem desconto do OD recirculado)
+    Dp1_bruto = Sbsi * ((1 - fcv * Yh) / 2.86) + (K2T * fxm * MXbh * 1000.0) / Q
+
+    if fxm > 0 and Nc > 0:
+        # Equação quadrática exata de Marais & Ekama (WRC, 1984):
+        # Iguala carga de nitrato que entra no anóxico [(a + s) * Nc / (a + s + 1)]
+        # ao potencial efetivo [Dp1_bruto - (a * Oa + s * Os) / 2.86]
+        B_eq = Dp1_bruto - (s * OD_recirc_lodo) / 2.86
+        C_eq = OD_reator / 2.86
+
+        # C*a² + [Nc - B + C*(s + 1)]*a + [s*Nc - B*(s + 1)] = 0
+        qa = C_eq
+        qb = Nc - B_eq + C_eq * (s + 1.0)
+        qc = s * Nc - B_eq * (s + 1.0)
+
+        discriminante = qb**2 - 4.0 * qa * qc
+        if discriminante >= 0 and qa > 0:
+            a_otimo = (-qb + math.sqrt(discriminante)) / (2.0 * qa)
+        else:
+            a_otimo = 0.0
+
+        # Aplica limites operacionais (0 <= a <= a_max)
+        a = min(a_max, max(0.0, a_otimo))
+
+        # Penalidade real de nitrato devido ao OD carreado pelas recirculações (a e s)
+        penalidade_OD_N = (a * OD_reator + s * OD_recirc_lodo) / 2.86
+        Dp1_efetivo = max(0.0, Dp1_bruto - penalidade_OD_N)
+
+        # Nitrato efluente: o maior entre o limite hidráulico [Nc/(a+s+1)] e o estequiométrico [Nc - Dp1_efetivo]
+        Nne_hidraulico = Nc / (a + s + 1.0)
+        Nne_estequiometrico = max(0.0, Nc - Dp1_efetivo)
+        Nne = max(Nne_hidraulico, Nne_estequiometrico)
     else:
+        a_otimo = 0.0
         a = 0.0
+        penalidade_OD_N = 0.0
+        Dp1_efetivo = 0.0
         Nne = Nc
 else:
     Nc = 0.0
-    Dp1 = 0.0
+    Dp1_bruto = 0.0
+    Dp1_efetivo = 0.0
+    penalidade_OD_N = 0.0
+    a_otimo = 0.0
     a = 0.0
     Nae = max(0.0, Nti - Nouse - Ns)
     Nne = 0.0
@@ -220,17 +259,14 @@ SOTR = FOt / fator_correcao_O2
 rho_ar = 1.20 * P_atm_rel
 frac_O2_ar = 0.232
 
-# 1) Vazão de ar estritamente para demanda biológica (processo)
 Q_ar_demanda_Nm3_d = FOt / (AOTE * rho_ar * frac_O2_ar)
 Q_ar_demanda_Nm3_h = Q_ar_demanda_Nm3_d / 24.0
 Q_ar_demanda_Nm3_min = Q_ar_demanda_Nm3_h / 60.0
 
-# 2) Vazão de ar mínima requerida para mistura completa (sobre o volume aeróbio real construído)
 Q_ar_mistura_Nm3_min = taxa_min_mistura * (Vaer_real_total / 1000.0)
 Q_ar_mistura_Nm3_h = Q_ar_mistura_Nm3_min * 60.0
 Q_ar_mistura_Nm3_d = Q_ar_mistura_Nm3_h * 24.0
 
-# 3) Vazão de ar adotada no projeto (trava no maior valor entre demanda e mistura)
 governado_por_mistura = Q_ar_mistura_Nm3_h > Q_ar_demanda_Nm3_h
 Q_ar_projeto_Nm3_h = max(Q_ar_demanda_Nm3_h, Q_ar_mistura_Nm3_h)
 Q_ar_projeto_Nm3_min = Q_ar_projeto_Nm3_h / 60.0
@@ -239,7 +275,6 @@ Q_ar_projeto_Nm3_d = Q_ar_projeto_Nm3_h * 24.0
 Taxa_ar_m2 = Q_ar_projeto_Nm3_h / Area_aer_total
 Taxa_ar_vol = Q_ar_projeto_Nm3_min / (Vaer_real_total / 1000.0)
 
-# Potência adiabática dos sopradores calculada sobre a vazão de projeto adotada
 P1_kPa = 101.325 * P_atm_rel
 P2_kPa = P1_kPa + (submergencia + perda_carga_ar) * 9.806
 w_ar_kg_s = (Q_ar_projeto_Nm3_d * rho_ar) / 86400.0
@@ -288,8 +323,8 @@ with aba_processo:
     col5, col6, col7, col8 = st.columns(4)
     col5.metric("Volume Anóxico", f"{Vanox:,.0f} m³", f"{fxm*100:.0f}% do total")
     col6.metric("Volume Aeróbio", f"{Vaer:,.0f} m³", f"{(1-fxm)*100:.0f}% do total")
-    col7.metric("Recirculação Interna (a)", f"{a:.2f} Q", f"Vazão Qa: {a*Q:,.0f} m³/d")
-    col8.metric("Recirculação de Lodo (s)", f"{s:.2f} Q", f"Vazão Qr: {s*Q:,.0f} m³/d")
+    col7.metric("Recirculação Interna (a)", f"{a:.2f} Q", f"Ótimo calc.: {a_otimo:.2f} Q (Qa={a*Q:,.0f} m³/d)")
+    col8.metric("Desnitrificação Efetiva (Dp1)", f"{Dp1_efetivo:.1f} mg N/L", f"Bruto: {Dp1_bruto:.1f} | Perda OD: -{penalidade_OD_N:.1f}")
 
     st.divider()
 
@@ -306,7 +341,7 @@ with aba_processo:
                 f"Solúvel: {DQO_sol:.1f} | Particulada: {DQO_part:.1f}",
                 "Definido pela eficiência do decantador",
                 f"OD={OD_reator:.1f} mg/L (f_OD={f_OD_nit:.2f})" if modo.startswith("Remoção") else "Sem nitrificação no balanço",
-                f"Potencial desnitrificação Dp1: {Dp1:.1f} mg/L" if fxm > 0 else "Sem zona anóxica",
+                f"Dp1 efetivo: {Dp1_efetivo:.1f} mg/L (perda OD: {penalidade_OD_N:.1f} mg/L)" if fxm > 0 else "Sem zona anóxica",
                 f"Orgânico solúvel residual: {Nouse:.1f} mg/L",
                 "Assimilação celular convencional (sem EBPR)"
             ]
@@ -436,7 +471,7 @@ with aba_geometria:
 with aba_cenarios:
     st.subheader("⚖️ Salvar e Comparar Diferentes Cenários de Projeto")
     st.markdown(
-        "A tabela abaixo compara **volumes, geometria, aeração e toda a qualidade do efluente tratado (DBO₅, DQO, SST, N-NH₄, N-NO₃, NT e P)**. "
+        "A tabela abaixo compara **volumes, geometria, recirculação interna, aeração e toda a qualidade do efluente tratado (DBO₅, DQO, SST, N-NH₄, N-NO₃, NT e P)**. "
         "Além disso, parâmetros cinéticos e de aeração aparecem automaticamente como colunas extras sempre que você alterá-los entre um cenário e outro."
     )
 
@@ -458,6 +493,8 @@ with aba_cenarios:
                 "OD (mg/L)": OD_reator,
                 "θc (dias)": round(tc, 1),
                 "fxm": round(fxm, 2),
+                "Recirc. a": round(a, 2),
+                "Dp1 Ef. (mg/L)": round(Dp1_efetivo, 1),
                 "Vt Real (m³)": round(Vt_real_total, 0),
                 "Área Planta (m²)": round(Area_planta_total, 1),
                 "Dim. Aeróbio (m)": f"{num_modulos}x({B_aer:.2f}x{L_aer:.2f})",
@@ -468,7 +505,6 @@ with aba_cenarios:
                 "Critério Ar": "Mistura Mín." if governado_por_mistura else "Demanda O₂",
                 "Potência (kW)": round(Potencia_kW, 1),
                 "Px Lodo (kg/d)": round(Px_SST, 0),
-                # Qualidade completa do efluente tratado para comparação
                 "DBO₅ Ef. (mg/L)": round(DBO_ef, 1),
                 "DQO Ef. (mg/L)": round(DQO_ef, 1),
                 "SST Ef. (mg/L)": round(SST_ef, 1),
@@ -485,6 +521,8 @@ with aba_cenarios:
                     "fus": round(fus, 2),
                     "Xt (mg/L)": round(Xt, 0),
                     "s (Qr/Q)": round(s, 2),
+                    "a_max": round(a_max, 1),
+                    "OD Lodo Os": round(OD_recirc_lodo, 1),
                     "Yh": round(Yh, 3),
                     "bh20 (d⁻¹)": round(bh20, 3),
                     "f (endóg.)": round(f, 2),
@@ -565,7 +603,8 @@ dados_export = [
     ("NTK afluente (Nti)", Nti, "mg N/L"),
     ("Fósforo afluente (Pti)", Pti, "mg P/L"),
     ("Temperatura mínima (T)", T, "°C"),
-    ("OD desejado no reator (CL)", OD_reator, "mg/L"),
+    ("OD desejado no tanque aeróbio (Oa)", OD_reator, "mg/L"),
+    ("OD no retorno de lodo (Os)", OD_recirc_lodo, "mg/L"),
     ("Idade do lodo de projeto (θc)", round(tc, 2), "dias"),
     ("Massa total de SST no reator (MXt)", round(MXt, 1), "kg SST"),
     ("Relação SSV/SST (fv)", round(fv, 3), "-"),
@@ -579,6 +618,13 @@ dados_export = [
     ("Volume real total construído", round(Vt_real_total, 1), "m³"),
     ("Área total ocupada em planta", round(Area_planta_total, 1), "m²"),
     ("TDH real (geométrico)", round(TDH_real, 2), "horas"),
+    ("Capacidade de nitrificação (Nc)", round(Nc, 2), "mg N/L"),
+    ("Potencial bruto de desnitrificação (Dp1,bruto)", round(Dp1_bruto, 2), "mg N/L"),
+    ("Penalidade de OD na zona anóxica (ΔN_OD)", round(penalidade_OD_N, 2), "mg N/L"),
+    ("Potencial efetivo de desnitrificação (Dp1,ef)", round(Dp1_efetivo, 2), "mg N/L"),
+    ("Razão recirculação interna ótima (a_ótimo)", round(a_otimo, 2), "-"),
+    ("Razão recirculação interna adotada (a)", round(a, 2), "-"),
+    ("Razão recirculação de lodo (s)", round(s, 2), "-"),
     ("Demanda real de oxigênio (AOR / FOt)", round(FOt, 1), "kg O2/d"),
     ("Demanda padrão de oxigênio (SOTR)", round(SOTR, 1), "kg O2/d"),
     ("Eficiência transferência campo (AOTE)", round(AOTE * 100, 2), "%"),
