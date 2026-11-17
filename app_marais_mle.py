@@ -28,7 +28,7 @@ modo = st.sidebar.radio(
 # --- BARRA LATERAL: DADOS DE ENTRADA ---
 st.sidebar.header("1. Dados do Esgoto Afluente")
 Q_Ls = st.sidebar.number_input("Vazão média afluente (Q) [L/s]", min_value=0.1, value=57.87, step=1.0, format="%.2f")
-Q = Q_Ls * 86.4  # Conversão exata de L/s para m³/d (86400 s/d / 1000 L/m³)
+Q = Q_Ls * 86.4
 st.sidebar.caption(f"Vazão convertida: **{Q:,.1f} m³/d**")
 
 Sti = st.sidebar.number_input("DQO total afluente (Sti) [mg/L]", min_value=50.0, value=600.0, step=10.0)
@@ -106,7 +106,6 @@ unmT = unm20 * (1.123 ** (T - 20))
 KnT = Kn20 * (1.123 ** (T - 20))
 bnT = bn20 * (1.029 ** (T - 20))
 
-# Fator de limitação de OD nas nitrificantes (KO2 = 0.5 mg/L)
 KO2_nit = 0.50
 f_OD_nit = OD_reator / (KO2_nit + OD_reator)
 unmT_efetivo = unmT * f_OD_nit
@@ -167,40 +166,36 @@ else:
         st.warning(
             f"⚠️ **Alerta de Nitrificação Espontânea:** A idade do lodo adotada (**{tc:.1f} dias**) é superior à idade mínima "
             f"das nitrificantes a {T:.1f}°C e OD = {OD_reator:.1f} mg/L (**{tc_min_nitrif_ref:.1f} dias**). Na prática, o reator irá nitrificar naturalmente, "
-            f"elevando a demanda real de oxigênio de **{FOc:,.0f} kg O₂/d** para aproximadamente **{FOt_com_nitrif:,.0f} kg O₂/d**."
+            f"elevando a demanda real de oxigênio de **{FOc:,.0f} kg O₂/d** (apenas carbonácea) para aproximadamente **{FOt_com_nitrif:,.0f} kg O₂/d**."
         )
 
 FOn = (4.57 * Q * Nc) / 1000.0
 FOd = (2.86 * Q * (Nc - Nne)) / 1000.0
-FOt = FOc + FOn - FOd  # AOR - Actual Oxygen Requirement (kg O2/d)
+FOt = FOc + FOn - FOd
 Px_SST = MXt / tc
 
-# --- CÁLCULOS DE AERAÇÃO POR AR DIFUSO (METCALF & EDDY / ASCE) ---
-SOTE_total = min(0.55, (SOTE_m / 100.0) * submergencia)  # Eficiência padrão total (fração)
-P_atm_rel = math.exp(-0.0001185 * altitude)  # Pressão atmosférica relativa à altitude
-Cs_20 = 9.08  # Saturação de OD em água limpa a 20°C e 1 atm (mg/L)
-Cs_T = 14.652 - 0.41022 * T + 0.007991 * (T ** 2) - 0.000077774 * (T ** 3)  # Saturação na temp. T
-# Saturação média na profundidade do tanque (meia coluna + pressão saída)
-Cs_T_H = Cs_T * P_atm_rel * (0.5 * (1.0 + (submergencia / 10.33)) + 0.5 * (1.0 + (SOTE_total * 0.21) / 0.21))
-Cs_T_H = Cs_T * P_atm_rel * (1.0 + (submergencia / 20.66))  # Correção padrão de meia profundidade
+# --- CÁLCULOS DE AERAÇÃO POR AR DIFUSO ---
+SOTE_total = min(0.55, (SOTE_m / 100.0) * submergencia)
+P_atm_rel = math.exp(-0.0001185 * altitude)
+Cs_20 = 9.08
+Cs_T = 14.652 - 0.41022 * T + 0.007991 * (T ** 2) - 0.000077774 * (T ** 3)
+Cs_T_H = Cs_T * P_atm_rel * (1.0 + (submergencia / 20.66))
 
 fator_correcao_O2 = (alfa * beta * F_incrust * ((Cs_T_H - OD_reator) / Cs_20) * (1.024 ** (T - 20)))
-AOTE = SOTE_total * fator_correcao_O2  # Eficiência real de transferência em campo (fração)
-SOTR = FOt / fator_correcao_O2  # Standard Oxygen Transfer Rate (kg O2/d)
+AOTE = SOTE_total * fator_correcao_O2
+SOTR = FOt / fator_correcao_O2
 
-# Densidade do ar (1,20 kg/m³ a 20°C e 1 atm) e fração mássica de O2 no ar (0,232 kg O2/kg ar)
 rho_ar = 1.20 * P_atm_rel
 frac_O2_ar = 0.232
 Q_ar_Nm3_d = FOt / (AOTE * rho_ar * frac_O2_ar)
 Q_ar_Nm3_h = Q_ar_Nm3_d / 24.0
 Q_ar_Nm3_min = Q_ar_Nm3_h / 60.0
 
-# Potência adiabática dos sopradores (kW)
 P1_kPa = 101.325 * P_atm_rel
 P2_kPa = P1_kPa + (submergencia + perda_carga_ar) * 9.806
 w_ar_kg_s = (Q_ar_Nm3_d * rho_ar) / 86400.0
-R_ar = 0.287  # kJ/(kg.K)
-T_ar_K = 293.15  # 20°C padrão admissão
+R_ar = 0.287
+T_ar_K = 293.15
 k_ar = 1.395
 n_ad = (k_ar - 1.0) / k_ar
 Potencia_kW = (w_ar_kg_s * R_ar * T_ar_K / (n_ad * ef_soprador)) * (((P2_kPa / P1_kPa) ** n_ad) - 1.0)
@@ -249,7 +244,6 @@ Vt_real_total = Vaer_real_total + Vanox_real_total
 Area_planta_total = Area_aer_total + Area_anox_total
 TDH_real = (Vt_real_total / Q) * 24.0
 
-# Taxa de aplicação de ar (verificar mistura mínima: >= 1,2 Nm³/h.m² ou 20 m³/1000 m³.min)
 Taxa_ar_m2 = Q_ar_Nm3_h / Area_aer_total
 Taxa_ar_vol = Q_ar_Nm3_min / (Vaer_real_total / 1000.0)
 
@@ -423,7 +417,6 @@ with aba_cenarios:
         st.write("")
         if st.button("➕ Adicionar Cenário", use_container_width=True):
             novo_cenario = {
-                # Colunas principais sempre visíveis
                 "Cenário": nome_cenario,
                 "Modo": "MLE (C + N)" if modo.startswith("Remoção") else "Apenas C",
                 "Q (L/s)": round(Q_Ls, 2),
@@ -447,7 +440,6 @@ with aba_cenarios:
                 "N-NH₄ Ef. (mg/L)": round(N_NH4_ef, 1),
                 "N-NO₃ Ef. (mg/L)": round(N_NO3_ef, 1),
                 "NT Ef. (mg/L)": round(NT_ef, 1),
-                # Dicionário oculto com todos os parâmetros sensíveis/cinéticos para detecção automática de diferenças
                 "_params_extras": {
                     "fbs": round(fbs, 2),
                     "fbp": round(fbp, 2),
@@ -482,23 +474,28 @@ with aba_cenarios:
             st.rerun()
 
     if st.session_state.cenarios:
-        # Detecta quais parâmetros extras (cinéticos/aeração) variaram entre os cenários salvos
-        chaves_extras = list(st.session_state.cenarios[0]["_params_extras"].keys())
+        # Filtra apenas cenários compatíveis com a estrutura atual (evita KeyError de sessões antigas)
+        cenarios_validos = [c for c in st.session_state.cenarios if "_params_extras" in c]
+        if len(cenarios_validos) != len(st.session_state.cenarios):
+            st.session_state.cenarios = cenarios_validos
+
+    if st.session_state.cenarios:
+        chaves_extras = list(st.session_state.cenarios[0].get("_params_extras", {}).keys())
         colunas_variadas = []
         for k in chaves_extras:
-            valores_k = {c["_params_extras"][k] for c in st.session_state.cenarios}
+            valores_k = {c.get("_params_extras", {}).get(k) for c in st.session_state.cenarios}
             if len(valores_k) > 1:
                 colunas_variadas.append(k)
 
         if colunas_variadas:
             st.info(f"🔍 **Diferenças detectadas automaticamente entre os cenários:** {', '.join(colunas_variadas)}")
 
-        # Monta a tabela final incluindo as colunas principais + apenas os parâmetros extras que mudaram
         linhas_tabela = []
         for c in st.session_state.cenarios:
             linha = {k: v for k, v in c.items() if k != "_params_extras"}
+            extras_c = c.get("_params_extras", {})
             for k_var in colunas_variadas:
-                linha[k_var] = c["_params_extras"][k_var]
+                linha[k_var] = extras_c.get(k_var, "-")
             linhas_tabela.append(linha)
 
         df_cenarios = pd.DataFrame(linhas_tabela)
@@ -568,7 +565,7 @@ with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         linhas_excel = []
         for c in st.session_state.cenarios:
             linha = {k: v for k, v in c.items() if k != "_params_extras"}
-            linha.update(c["_params_extras"])
+            linha.update(c.get("_params_extras", {}))
             linhas_excel.append(linha)
         pd.DataFrame(linhas_excel).to_excel(writer, index=False, sheet_name="Comparacao_Cenarios")
 
