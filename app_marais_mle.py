@@ -35,7 +35,7 @@ else:
 st.sidebar.header("3. Parâmetros Operacionais e de Projeto")
 Xt = st.sidebar.number_input("SST desejado no reator (Xt) [mg/L]", min_value=1500.0, value=3500.0, step=100.0)
 Xte = st.sidebar.number_input("SST esperado no efluente (Xte) [mg/L]", min_value=5.0, value=15.0, step=1.0)
-fxm = st.sidebar.slider("Fração mássica anóxica (fxm)", 0.15, 0.45, 0.30, 0.01)
+fxm = st.sidebar.slider("Fração mássica anóxica (fxm)", 0.00, 0.45, 0.30, 0.01)
 Sf = st.sidebar.slider("Fator de segurança nitrificação (Sf)", 1.10, 2.00, 1.35, 0.05)
 Na_alvo = st.sidebar.number_input("Amônia alvo para projeto (Na_alvo) [mg N/L]", min_value=0.5, value=1.5, step=0.1)
 s = st.sidebar.slider("Razão de recirculação de lodo (s = Qr/Q)", 0.25, 1.50, 0.75, 0.05)
