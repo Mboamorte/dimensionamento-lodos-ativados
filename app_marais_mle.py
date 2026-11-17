@@ -9,7 +9,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Inicializa memória da sessão para comparação de cenários
 if "cenarios" not in st.session_state:
     st.session_state.cenarios = []
 
@@ -17,7 +16,7 @@ def arredondar_025(valor):
     return math.ceil(valor / 0.25) * 0.25
 
 st.title("💧 Dimensionamento Estático de Lodos Ativados")
-st.markdown("Modelo estacionário de **Marais & Ekama (UCT)** para remoção de matéria orgânica, nitrogênio e pré-dimensionamento geométrico.")
+st.markdown("Modelo estacionário de **Marais & Ekama (UCT)** com aeração por **ar difuso**, geometria e comparador inteligente de cenários.")
 
 # --- BARRA LATERAL: MODO DE OPERAÇÃO ---
 st.sidebar.header("0. Modo de Operação")
@@ -28,7 +27,10 @@ modo = st.sidebar.radio(
 
 # --- BARRA LATERAL: DADOS DE ENTRADA ---
 st.sidebar.header("1. Dados do Esgoto Afluente")
-Q = st.sidebar.number_input("Vazão média afluente (Q) [m³/d]", min_value=10.0, value=5000.0, step=100.0)
+Q_Ls = st.sidebar.number_input("Vazão média afluente (Q) [L/s]", min_value=0.1, value=57.87, step=1.0, format="%.2f")
+Q = Q_Ls * 86.4  # Conversão exata de L/s para m³/d (86400 s/d / 1000 L/m³)
+st.sidebar.caption(f"Vazão convertida: **{Q:,.1f} m³/d**")
+
 Sti = st.sidebar.number_input("DQO total afluente (Sti) [mg/L]", min_value=50.0, value=600.0, step=10.0)
 Nti = st.sidebar.number_input("NTK afluente (Nti) [mg N/L]", min_value=5.0, value=50.0, step=1.0)
 Pti = st.sidebar.number_input("Fósforo Total afluente (Pti) [mg P/L]", min_value=0.5, value=8.0, step=0.5)
@@ -68,7 +70,18 @@ borda_livre = st.sidebar.slider("Borda livre [m]", min_value=0.30, max_value=1.0
 rel_LB_aer = st.sidebar.selectbox("Relação Comprimento/Largura (L:B) - Zona Aeróbia", [1.0, 1.5, 2.0, 2.5, 3.0], index=2)
 rel_LB_anox = st.sidebar.selectbox("Relação Comprimento/Largura (L:B) - Zona Anóxica", [1.0, 1.5, 2.0], index=0)
 
-with st.sidebar.expander("Parâmetros Cinéticos (Padrão Marais/UCT)"):
+st.sidebar.header("5. Sistema de Aeração (Ar Difuso)")
+OD_reator = st.sidebar.slider("OD desejado no tanque aeróbio (CL) [mg/L]", 1.0, 4.0, 2.0, 0.1)
+altitude = st.sidebar.number_input("Altitude da ETE [m]", min_value=0.0, max_value=2500.0, value=900.0, step=50.0)
+submergencia = st.sidebar.number_input("Submergência dos difusores [m]", min_value=2.5, max_value=6.8, value=round(prof_util - 0.30, 2), step=0.10)
+SOTE_m = st.sidebar.slider("Eficiência padrão (SOTE) por metro [%/m]", 4.0, 8.0, 6.0, 0.2)
+alfa = st.sidebar.slider("Fator α (transferência esgoto/água limpa)", 0.40, 0.85, 0.55, 0.05)
+beta = st.sidebar.slider("Fator β (saturação esgoto/água limpa)", 0.90, 1.00, 0.95, 0.01)
+F_incrust = st.sidebar.slider("Fator de incrustação dos difusores (F)", 0.70, 1.00, 0.85, 0.05)
+ef_soprador = st.sidebar.slider("Eficiência global do conjunto motor-soprador [%]", 55.0, 80.0, 68.0, 1.0) / 100.0
+perda_carga_ar = st.sidebar.number_input("Perda de carga tubulação + difusor [m.c.a.]", min_value=0.3, max_value=2.5, value=0.8, step=0.1)
+
+with st.sidebar.expander("6. Parâmetros Cinéticos (Padrão Marais/UCT)"):
     Yh = st.number_input("Yh [mg SSV/mg DQO]", value=0.45, format="%.3f")
     bh20 = st.number_input("bh20 [d⁻¹]", value=0.24, format="%.3f")
     f = st.number_input("f (resíduo endógeno)", value=0.20, format="%.2f")
@@ -93,12 +106,17 @@ unmT = unm20 * (1.123 ** (T - 20))
 KnT = Kn20 * (1.123 ** (T - 20))
 bnT = bn20 * (1.029 ** (T - 20))
 
-tc_min_nitrif_ref = 1.0 / (unmT - bnT) if (unmT - bnT) > 0 else 999.0
+# Fator de limitação de OD nas nitrificantes (KO2 = 0.5 mg/L)
+KO2_nit = 0.50
+f_OD_nit = OD_reator / (KO2_nit + OD_reator)
+unmT_efetivo = unmT * f_OD_nit
+
+tc_min_nitrif_ref = 1.0 / (unmT_efetivo - bnT) if (unmT_efetivo - bnT) > 0 else 999.0
 
 if modo == "Remoção de Matéria Orgânica + N (MLE)":
-    denom_tc = ((unmT * Na_alvo) / (KnT + Na_alvo) - bnT) * (1 - fxm)
+    denom_tc = ((unmT_efetivo * Na_alvo) / (KnT + Na_alvo) - bnT) * (1 - fxm)
     if denom_tc <= 0:
-        st.error("Combinação inviável para nitrificação nesta temperatura e fração anóxica. Reduza fxm ou aumente Na_alvo.")
+        st.error("Combinação inviável para nitrificação nesta temperatura, OD e fração anóxica. Reduza fxm, aumente OD ou aumente Na_alvo.")
         st.stop()
     tc_min = 1.0 / denom_tc
     tc = Sf * tc_min
@@ -124,7 +142,7 @@ Nouse = 0.03 * Nti
 FOc = (Q * Sbi * (1 - fcv * Yh)) / 1000.0 + fcv * (1 - f) * bhT * MXbh
 
 if modo == "Remoção de Matéria Orgânica + N (MLE)":
-    Nae = (KnT * (1 + bnT * tc)) / (unmT * (1 - fxm) * tc - (1 + bnT * tc))
+    Nae = (KnT * (1 + bnT * tc)) / (unmT_efetivo * (1 - fxm) * tc - (1 + bnT * tc))
     Nc = max(0.0, Nti - Nouse - Nae - Ns)
     K2T = K2_20 * (1.08 ** (T - 20))
     Dp1 = Sbsi * ((1 - fcv * Yh) / 2.86) + (K2T * fxm * MXbh * 1000.0) / Q
@@ -148,16 +166,48 @@ else:
         FOt_com_nitrif = FOc + FOn_potencial
         st.warning(
             f"⚠️ **Alerta de Nitrificação Espontânea:** A idade do lodo adotada (**{tc:.1f} dias**) é superior à idade mínima "
-            f"das nitrificantes a {T:.1f}°C (**{tc_min_nitrif_ref:.1f} dias**). Na prática, o reator irá nitrificar naturalmente, "
-            f"elevando a demanda real de oxigênio de **{FOc:,.0f} kg O₂/d** (apenas carbonácea) para aproximadamente "
-            f"**{FOt_com_nitrif:,.0f} kg O₂/d** (com nitrificação). Considere esse valor ao dimensionar os aeradores."
+            f"das nitrificantes a {T:.1f}°C e OD = {OD_reator:.1f} mg/L (**{tc_min_nitrif_ref:.1f} dias**). Na prática, o reator irá nitrificar naturalmente, "
+            f"elevando a demanda real de oxigênio de **{FOc:,.0f} kg O₂/d** para aproximadamente **{FOt_com_nitrif:,.0f} kg O₂/d**."
         )
 
 FOn = (4.57 * Q * Nc) / 1000.0
 FOd = (2.86 * Q * (Nc - Nne)) / 1000.0
-FOt = FOc + FOn - FOd
+FOt = FOc + FOn - FOd  # AOR - Actual Oxygen Requirement (kg O2/d)
 Px_SST = MXt / tc
 
+# --- CÁLCULOS DE AERAÇÃO POR AR DIFUSO (METCALF & EDDY / ASCE) ---
+SOTE_total = min(0.55, (SOTE_m / 100.0) * submergencia)  # Eficiência padrão total (fração)
+P_atm_rel = math.exp(-0.0001185 * altitude)  # Pressão atmosférica relativa à altitude
+Cs_20 = 9.08  # Saturação de OD em água limpa a 20°C e 1 atm (mg/L)
+Cs_T = 14.652 - 0.41022 * T + 0.007991 * (T ** 2) - 0.000077774 * (T ** 3)  # Saturação na temp. T
+# Saturação média na profundidade do tanque (meia coluna + pressão saída)
+Cs_T_H = Cs_T * P_atm_rel * (0.5 * (1.0 + (submergencia / 10.33)) + 0.5 * (1.0 + (SOTE_total * 0.21) / 0.21))
+Cs_T_H = Cs_T * P_atm_rel * (1.0 + (submergencia / 20.66))  # Correção padrão de meia profundidade
+
+fator_correcao_O2 = (alfa * beta * F_incrust * ((Cs_T_H - OD_reator) / Cs_20) * (1.024 ** (T - 20)))
+AOTE = SOTE_total * fator_correcao_O2  # Eficiência real de transferência em campo (fração)
+SOTR = FOt / fator_correcao_O2  # Standard Oxygen Transfer Rate (kg O2/d)
+
+# Densidade do ar (1,20 kg/m³ a 20°C e 1 atm) e fração mássica de O2 no ar (0,232 kg O2/kg ar)
+rho_ar = 1.20 * P_atm_rel
+frac_O2_ar = 0.232
+Q_ar_Nm3_d = FOt / (AOTE * rho_ar * frac_O2_ar)
+Q_ar_Nm3_h = Q_ar_Nm3_d / 24.0
+Q_ar_Nm3_min = Q_ar_Nm3_h / 60.0
+
+# Potência adiabática dos sopradores (kW)
+P1_kPa = 101.325 * P_atm_rel
+P2_kPa = P1_kPa + (submergencia + perda_carga_ar) * 9.806
+w_ar_kg_s = (Q_ar_Nm3_d * rho_ar) / 86400.0
+R_ar = 0.287  # kJ/(kg.K)
+T_ar_K = 293.15  # 20°C padrão admissão
+k_ar = 1.395
+n_ad = (k_ar - 1.0) / k_ar
+Potencia_kW = (w_ar_kg_s * R_ar * T_ar_K / (n_ad * ef_soprador)) * (((P2_kPa / P1_kPa) ** n_ad) - 1.0)
+Potencia_CV = Potencia_kW * 1.3596
+Consumo_kWh_d = Potencia_kW * 24.0
+
+# --- EFLUENTE TRATADO ---
 SST_ef = Xte
 DQO_sol = Susi
 DQO_part = SST_ef * fv * fcv
@@ -175,31 +225,23 @@ P_ef = max(0.5, Pti - ((fp * MXv * 1000.0) / (Q * tc)) + (fp * SST_ef * fv))
 # --- PRÉ-DIMENSIONAMENTO GEOMÉTRICO (MÚLTIPLOS DE 0,25 m) ---
 H_total = prof_util + borda_livre
 
-# Zona Aeróbia por módulo
 Vaer_mod = Vaer / num_modulos
 Area_aer_req = Vaer_mod / prof_util
-B_aer_calc = math.sqrt(Area_aer_req / rel_LB_aer)
-B_aer = arredondar_025(B_aer_calc)
+B_aer = arredondar_025(math.sqrt(Area_aer_req / rel_LB_aer))
 L_aer = arredondar_025(B_aer * rel_LB_aer)
-Vaer_real_mod = B_aer * L_aer * prof_util
-Vaer_real_total = Vaer_real_mod * num_modulos
+Vaer_real_total = B_aer * L_aer * prof_util * num_modulos
 Area_aer_total = B_aer * L_aer * num_modulos
 
-# Zona Anóxica por módulo
 if Vanox > 0:
     Vanox_mod = Vanox / num_modulos
     Area_anox_req = Vanox_mod / prof_util
-    B_anox_calc = math.sqrt(Area_anox_req / rel_LB_anox)
-    B_anox = arredondar_025(B_anox_calc)
+    B_anox = arredondar_025(math.sqrt(Area_anox_req / rel_LB_anox))
     L_anox = arredondar_025(B_anox * rel_LB_anox)
-    Vanox_real_mod = B_anox * L_anox * prof_util
-    Vanox_real_total = Vanox_real_mod * num_modulos
+    Vanox_real_total = B_anox * L_anox * prof_util * num_modulos
     Area_anox_total = B_anox * L_anox * num_modulos
 else:
-    Vanox_mod = 0.0
     B_anox = 0.0
     L_anox = 0.0
-    Vanox_real_mod = 0.0
     Vanox_real_total = 0.0
     Area_anox_total = 0.0
 
@@ -207,11 +249,16 @@ Vt_real_total = Vaer_real_total + Vanox_real_total
 Area_planta_total = Area_aer_total + Area_anox_total
 TDH_real = (Vt_real_total / Q) * 24.0
 
+# Taxa de aplicação de ar (verificar mistura mínima: >= 1,2 Nm³/h.m² ou 20 m³/1000 m³.min)
+Taxa_ar_m2 = Q_ar_Nm3_h / Area_aer_total
+Taxa_ar_vol = Q_ar_Nm3_min / (Vaer_real_total / 1000.0)
+
 # --- ORGANIZAÇÃO EM ABAS ---
-aba_processo, aba_geometria, aba_cenarios = st.tabs([
-    "📊 1. Processo e Qualidade do Efluente",
-    "📐 2. Pré-Dimensionamento Geométrico",
-    "⚖️ 3. Comparador de Cenários"
+aba_processo, aba_aeracao, aba_geometria, aba_cenarios = st.tabs([
+    "📊 1. Processo e Efluente",
+    "🌬️ 2. Aeração por Ar Difuso",
+    "📐 3. Geometria dos Tanques",
+    "⚖️ 4. Comparador de Cenários"
 ])
 
 # ==============================================================================
@@ -220,9 +267,9 @@ aba_processo, aba_geometria, aba_cenarios = st.tabs([
 with aba_processo:
     st.subheader("Principais Resultados do Dimensionamento Biológico")
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Idade do Lodo (θc)", f"{tc:.1f} dias", f"Mín. nitrif.: {tc_min:.1f} d")
-    col2.metric("Volume Total Calculado (Vt)", f"{Vt:,.0f} m³", f"TDH: {TDH:.1f} h")
-    col3.metric("Demanda Total O₂ (FOt)", f"{FOt:,.0f} kg/d", f"Crédito Desnit: {FOd:,.0f} kg/d")
+    col1.metric("Vazão de Projeto (Q)", f"{Q:,.1f} m³/d", f"Entrada: {Q_Ls:.2f} L/s")
+    col2.metric("Idade do Lodo (θc)", f"{tc:.1f} dias", f"Mín. nitrif.: {tc_min:.1f} d")
+    col3.metric("Volume Total Calculado (Vt)", f"{Vt:,.0f} m³", f"TDH: {TDH:.1f} h")
     col4.metric("Lodo de Excesso (Px)", f"{Px_SST:,.0f} kg SST/d", f"Relação SSV/SST: {fv:.2f}")
 
     col5, col6, col7, col8 = st.columns(4)
@@ -245,7 +292,7 @@ with aba_processo:
                 f"Solúvel: {DBO_sol:.1f} | Particulada: {DBO_part:.1f}",
                 f"Solúvel: {DQO_sol:.1f} | Particulada: {DQO_part:.1f}",
                 "Definido pela eficiência do decantador",
-                "Equilíbrio cinético" if modo.startswith("Remoção") else "Sem nitrificação no balanço",
+                f"OD={OD_reator:.1f} mg/L (f_OD={f_OD_nit:.2f})" if modo.startswith("Remoção") else "Sem nitrificação no balanço",
                 f"Potencial desnitrificação Dp1: {Dp1:.1f} mg/L" if fxm > 0 else "Sem zona anóxica",
                 f"Orgânico solúvel residual: {Nouse:.1f} mg/L",
                 "Assimilação celular convencional (sem EBPR)"
@@ -262,7 +309,46 @@ with aba_processo:
         st.bar_chart(df_n)
 
 # ==============================================================================
-# ABA 2: PRÉ-DIMENSIONAMENTO GEOMÉTRICO
+# ABA 2: AERAÇÃO POR AR DIFUSO
+# ==============================================================================
+with aba_aeracao:
+    st.subheader("🌬️ Dimensionamento do Sistema de Ar Difuso e Sopradores")
+    st.markdown(
+        f"Cálculo de transferência de oxigênio em campo (**AOR → SOTR**) considerando submergência de **{submergencia:.2f} m**, "
+        f"altitude de **{altitude:.0f} m** e concentração de OD mantida em **{OD_reator:.1f} mg/L**."
+    )
+
+    a1, a2, a3, a4 = st.columns(4)
+    a1.metric("Demanda Real (AOR / FOt)", f"{FOt:,.0f} kg O₂/d", f"Carbonácea: {FOc:,.0f} | Nitrif: {FOn:,.0f}")
+    a2.metric("Demanda Padrão (SOTR)", f"{SOTR:,.0f} kg O₂/d", f"Relação AOR/SOTR: {fator_correcao_O2:.2f}")
+    a3.metric("Vazão de Ar Requerida", f"{Q_ar_Nm3_h:,.0f} Nm³/h", f"{Q_ar_Nm3_min:,.1f} Nm³/min")
+    a4.metric("Potência dos Sopradores", f"{Potencia_kW:.1f} kW", f"{Potencia_CV:.1f} CV ({Consumo_kWh_d:,.0f} kWh/d)")
+
+    st.divider()
+
+    col_aer_esq, col_aer_dir = st.columns(2)
+    with col_aer_esq:
+        st.markdown("#### Parâmetros de Transferência de Massa")
+        df_aer_params = pd.DataFrame([
+            ("SOTE total (água limpa a 20°C)", f"{SOTE_total*100:.1f} %"),
+            ("AOTE efetivo (esgoto em campo)", f"{AOTE*100:.2f} %"),
+            ("Saturação de OD no tanque (Cs,T,H)", f"{Cs_T_H:.2f} mg/L"),
+            ("Pressão absoluta de descarga (P2)", f"{P2_kPa:.1f} kPa"),
+            ("Crédito de oxigênio na desnitrificação (FOd)", f"{FOd:,.0f} kg O₂/d"),
+        ], columns=["Parâmetro", "Valor"])
+        st.dataframe(df_aer_params, use_container_width=True, hide_index=True)
+
+    with col_aer_dir:
+        st.markdown("#### Verificação de Mistura Mínima no Tanque Aeróbio")
+        st.metric("Taxa de Ar Específica por Volume", f"{Taxa_ar_vol:.1f} Nm³/min por 1.000 m³", "Mínimo recomendado: 20 Nm³/min·1000m³")
+        st.metric("Taxa de Ar Superficial", f"{Taxa_ar_m2:.2f} Nm³/h·m²", "Mínimo recomendado: 1,2 Nm³/h·m²")
+        if Taxa_ar_vol < 20.0:
+            st.warning("⚠️ A vazão de ar está abaixo do mínimo para manter os sólidos em suspensão (20 Nm³/min por 1.000 m³). O dimensionamento dos sopradores deve ser governado pela mistura.")
+        else:
+            st.success("✅ A vazão de ar de processo atende plenamente ao critério de mistura completa no tanque aeróbio.")
+
+# ==============================================================================
+# ABA 3: PRÉ-DIMENSIONAMENTO GEOMÉTRICO
 # ==============================================================================
 with aba_geometria:
     st.subheader(f"📐 Pré-Dimensionamento Geométrico ({num_modulos} linha(s) em paralelo)")
@@ -317,18 +403,15 @@ with aba_geometria:
 
     st.dataframe(df_geom, use_container_width=True, hide_index=True)
 
-    st.info(
-        f"💡 **Resumo construtivo por linha:** Cada uma das **{num_modulos} linha(s)** terá "
-        + (f"um tanque anóxico de **{B_anox:.2f} m × {L_anox:.2f} m** seguido de " if Vanox > 0 else "")
-        + f"um tanque aeróbio de **{B_aer:.2f} m × {L_aer:.2f} m**, totalizando **{Area_planta_total:,.1f} m²** de área útil ocupada."
-    )
-
 # ==============================================================================
-# ABA 3: COMPARADOR DE CENÁRIOS
+# ABA 4: COMPARADOR INTELIGENTE DE CENÁRIOS
 # ==============================================================================
 with aba_cenarios:
     st.subheader("⚖️ Salvar e Comparar Diferentes Cenários de Projeto")
-    st.markdown("Configure os parâmetros na barra lateral e salve cada simulação abaixo para comparar volumes, área ocupada, demanda de oxigênio e efluente.")
+    st.markdown(
+        "A tabela abaixo exibe os parâmetros operacionais, geométricos e de aeração. **Parâmetros cinéticos e de aeração "
+        "(como Yh, bh20, μnm20, α, SOTE) aparecem automaticamente como colunas extras sempre que você alterá-los entre um cenário e outro.**"
+    )
 
     col_nome, col_btn_add, col_btn_clear = st.columns([2, 1, 1])
     with col_nome:
@@ -340,23 +423,53 @@ with aba_cenarios:
         st.write("")
         if st.button("➕ Adicionar Cenário", use_container_width=True):
             novo_cenario = {
+                # Colunas principais sempre visíveis
                 "Cenário": nome_cenario,
                 "Modo": "MLE (C + N)" if modo.startswith("Remoção") else "Apenas C",
-                "Q (m³/d)": round(Q, 0),
+                "Q (L/s)": round(Q_Ls, 2),
+                "Q (m³/d)": round(Q, 1),
+                "DQO Af. (mg/L)": round(Sti, 0),
+                "NTK Af. (mg/L)": round(Nti, 0),
                 "T (°C)": T,
+                "OD (mg/L)": OD_reator,
                 "θc (dias)": round(tc, 1),
                 "fxm": round(fxm, 2),
-                "Vt Calc. (m³)": round(Vt, 0),
                 "Vt Real (m³)": round(Vt_real_total, 0),
                 "Área Planta (m²)": round(Area_planta_total, 1),
                 "Dim. Aeróbio (m)": f"{num_modulos}x({B_aer:.2f}x{L_aer:.2f})",
                 "Dim. Anóxico (m)": f"{num_modulos}x({B_anox:.2f}x{L_anox:.2f})" if Vanox > 0 else "-",
-                "FOt O₂ (kg/d)": round(FOt, 0),
+                "AOR (kg O₂/d)": round(FOt, 0),
+                "SOTR (kg O₂/d)": round(SOTR, 0),
+                "Vazão Ar (Nm³/h)": round(Q_ar_Nm3_h, 0),
+                "Potência (kW)": round(Potencia_kW, 1),
                 "Px Lodo (kg/d)": round(Px_SST, 0),
                 "DBO₅ Ef. (mg/L)": round(DBO_ef, 1),
                 "N-NH₄ Ef. (mg/L)": round(N_NH4_ef, 1),
                 "N-NO₃ Ef. (mg/L)": round(N_NO3_ef, 1),
                 "NT Ef. (mg/L)": round(NT_ef, 1),
+                # Dicionário oculto com todos os parâmetros sensíveis/cinéticos para detecção automática de diferenças
+                "_params_extras": {
+                    "fbs": round(fbs, 2),
+                    "fbp": round(fbp, 2),
+                    "fus": round(fus, 2),
+                    "Xt (mg/L)": round(Xt, 0),
+                    "s (Qr/Q)": round(s, 2),
+                    "Yh": round(Yh, 3),
+                    "bh20 (d⁻¹)": round(bh20, 3),
+                    "f (endóg.)": round(f, 2),
+                    "fcv": round(fcv, 2),
+                    "fn": round(fn, 3),
+                    "fp": round(fp, 3),
+                    "μnm20 (d⁻¹)": round(unm20, 3),
+                    "Kn20 (mg/L)": round(Kn20, 2),
+                    "bn20 (d⁻¹)": round(bn20, 3),
+                    "K2_20": round(K2_20, 3),
+                    "SOTE (%/m)": round(SOTE_m, 1),
+                    "Fator α": round(alfa, 2),
+                    "Fator F": round(F_incrust, 2),
+                    "Submerg. (m)": round(submergencia, 2),
+                    "Prof. H (m)": round(prof_util, 2),
+                }
             }
             st.session_state.cenarios.append(novo_cenario)
             st.success(f"'{nome_cenario}' adicionado à comparação!")
@@ -369,7 +482,26 @@ with aba_cenarios:
             st.rerun()
 
     if st.session_state.cenarios:
-        df_cenarios = pd.DataFrame(st.session_state.cenarios)
+        # Detecta quais parâmetros extras (cinéticos/aeração) variaram entre os cenários salvos
+        chaves_extras = list(st.session_state.cenarios[0]["_params_extras"].keys())
+        colunas_variadas = []
+        for k in chaves_extras:
+            valores_k = {c["_params_extras"][k] for c in st.session_state.cenarios}
+            if len(valores_k) > 1:
+                colunas_variadas.append(k)
+
+        if colunas_variadas:
+            st.info(f"🔍 **Diferenças detectadas automaticamente entre os cenários:** {', '.join(colunas_variadas)}")
+
+        # Monta a tabela final incluindo as colunas principais + apenas os parâmetros extras que mudaram
+        linhas_tabela = []
+        for c in st.session_state.cenarios:
+            linha = {k: v for k, v in c.items() if k != "_params_extras"}
+            for k_var in colunas_variadas:
+                linha[k_var] = c["_params_extras"][k_var]
+            linhas_tabela.append(linha)
+
+        df_cenarios = pd.DataFrame(linhas_tabela)
         st.dataframe(df_cenarios, use_container_width=True, hide_index=True)
 
         g1, g2, g3 = st.columns(3)
@@ -377,25 +509,27 @@ with aba_cenarios:
             st.markdown("**Volume Real Total (m³)**")
             st.bar_chart(df_cenarios.set_index("Cenário")[["Vt Real (m³)"]])
         with g2:
+            st.markdown("**Vazão de Ar (Nm³/h) e Potência (kW)**")
+            st.bar_chart(df_cenarios.set_index("Cenário")[["Vazão Ar (Nm³/h)", "Potência (kW)"]])
+        with g3:
             st.markdown("**Área Ocupada em Planta (m²)**")
             st.bar_chart(df_cenarios.set_index("Cenário")[["Área Planta (m²)"]])
-        with g3:
-            st.markdown("**Demanda de Oxigênio (kg O₂/d)**")
-            st.bar_chart(df_cenarios.set_index("Cenário")[["FOt O₂ (kg/d)"]])
     else:
         st.info("Nenhum cenário salvo ainda. Clique em **'➕ Adicionar Cenário'** acima para começar a comparar.")
 
-# --- EXPORTAÇÃO PARA EXCEL (SEMPRE VISÍVEL NO RODAPÉ) ---
+# --- EXPORTAÇÃO PARA EXCEL ---
 st.divider()
-st.subheader("📥 Exportar Memorial de Cálculo, Geometria e Cenários")
+st.subheader("📥 Exportar Memorial Completo, Ar Difuso e Cenários")
 
 dados_export = [
     ("Modo de operação", modo, "-"),
-    ("Vazão afluente (Q)", Q, "m³/d"),
+    ("Vazão afluente (entrada)", round(Q_Ls, 2), "L/s"),
+    ("Vazão afluente (convertida)", round(Q, 1), "m³/d"),
     ("DQO total afluente (Sti)", Sti, "mg/L"),
     ("NTK afluente (Nti)", Nti, "mg N/L"),
     ("Fósforo afluente (Pti)", Pti, "mg P/L"),
     ("Temperatura mínima (T)", T, "°C"),
+    ("OD desejado no reator (CL)", OD_reator, "mg/L"),
     ("Idade do lodo de projeto (θc)", round(tc, 2), "dias"),
     ("Massa total de SST no reator (MXt)", round(MXt, 1), "kg SST"),
     ("Relação SSV/SST (fv)", round(fv, 3), "-"),
@@ -404,17 +538,17 @@ dados_export = [
     ("Volume aeróbio calculado (Vaer)", round(Vaer, 1), "m³"),
     ("Número de linhas em paralelo", num_modulos, "un"),
     ("Profundidade útil (H)", prof_util, "m"),
-    ("Altura total com borda livre", H_total, "m"),
     ("Dimensões Zona Anóxica (por linha)", f"{B_anox:.2f} x {L_anox:.2f}" if Vanox > 0 else "N/A", "m x m"),
     ("Dimensões Zona Aeróbia (por linha)", f"{B_aer:.2f} x {L_aer:.2f}", "m x m"),
     ("Volume real total construído", round(Vt_real_total, 1), "m³"),
     ("Área total ocupada em planta", round(Area_planta_total, 1), "m²"),
     ("TDH real (geométrico)", round(TDH_real, 2), "horas"),
-    ("Capacidade de nitrificação (Nc)", round(Nc, 2), "mg N/L"),
-    ("Potencial de desnitrificação (Dp1)", round(Dp1, 2), "mg N/L"),
-    ("Razão recirculação interna (a)", round(a, 2), "-"),
-    ("Razão recirculação de lodo (s)", round(s, 2), "-"),
-    ("Demanda total de oxigênio (FOt)", round(FOt, 1), "kg O2/d"),
+    ("Demanda real de oxigênio (AOR / FOt)", round(FOt, 1), "kg O2/d"),
+    ("Demanda padrão de oxigênio (SOTR)", round(SOTR, 1), "kg O2/d"),
+    ("Eficiência transferência campo (AOTE)", round(AOTE * 100, 2), "%"),
+    ("Vazão de ar requerida", round(Q_ar_Nm3_h, 1), "Nm³/h"),
+    ("Potência estimada dos sopradores", round(Potencia_kW, 2), "kW"),
+    ("Consumo energético aeração", round(Consumo_kWh_d, 1), "kWh/d"),
     ("Produção de lodo de excesso (Px)", round(Px_SST, 1), "kg SST/d"),
     ("DBO5 efluente", round(DBO_ef, 2), "mg/L"),
     ("DQO efluente", round(DQO_ef, 2), "mg/L"),
@@ -429,9 +563,14 @@ df_export = pd.DataFrame(dados_export, columns=["Parâmetro", "Valor", "Unidade"
 
 buffer = io.BytesIO()
 with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-    df_export.to_excel(writer, index=False, sheet_name="Cenario_Atual_e_Geometria")
+    df_export.to_excel(writer, index=False, sheet_name="Cenario_Atual_Ar_Difuso")
     if st.session_state.cenarios:
-        pd.DataFrame(st.session_state.cenarios).to_excel(writer, index=False, sheet_name="Comparacao_Cenarios")
+        linhas_excel = []
+        for c in st.session_state.cenarios:
+            linha = {k: v for k, v in c.items() if k != "_params_extras"}
+            linha.update(c["_params_extras"])
+            linhas_excel.append(linha)
+        pd.DataFrame(linhas_excel).to_excel(writer, index=False, sheet_name="Comparacao_Cenarios")
 
 st.download_button(
     label="⬇️ Baixar Memorial Completo e Cenários em Excel (.xlsx)",
