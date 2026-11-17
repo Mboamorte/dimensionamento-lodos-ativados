@@ -58,10 +58,12 @@ if modo == "Remoção de Matéria Orgânica + N (MLE)":
     fxm = st.sidebar.slider("Fração mássica anóxica (fxm)", 0.00, 0.45, 0.30, 0.01)
     Sf = st.sidebar.slider("Fator de segurança nitrificação (Sf)", 1.10, 2.00, 1.35, 0.05)
     Na_alvo = st.sidebar.number_input("Amônia alvo para projeto (Na_alvo) [mg N/L]", min_value=0.5, value=1.5, step=0.1)
-    a_max = st.sidebar.slider("Limite máximo recirculação interna (a_max)", 1.0, 6.0, 4.0, 0.5)
+    NT_meta = st.sidebar.number_input("Meta de Nitrogênio Total efluente (NT_meta) [mg N/L]", min_value=1.0, max_value=50.0, value=10.0, step=0.5)
+    a_max = st.sidebar.slider("Limite máximo recirculação interna (a_max)", 1.0, 4.0, 4.0, 0.5)
     OD_recirc_lodo = st.sidebar.number_input("OD no retorno de lodo (Os) [mg/L]", min_value=0.0, max_value=3.0, value=1.0, step=0.1)
 else:
     fxm = 0.0
+    NT_meta = 0.0
     a_max = 0.0
     OD_recirc_lodo = 0.0
     tc_manual = st.sidebar.slider("Idade do lodo adotada (θc) [dias]", 2.0, 25.0, 5.0, 0.5)
@@ -150,22 +152,18 @@ Nouse = 0.03 * Nti
 FOc = (Q * Sbi * (1 - fcv * Yh)) / 1000.0 + fcv * (1 - f) * bhT * MXbh
 
 # --- BALANÇO DE NITROGÊNIO, RECIRCULAÇÃO INTERNA (a) E EFEITO DO OD NA ZONA ANÓXICA ---
+recirc_limitada = False
 if modo == "Remoção de Matéria Orgânica + N (MLE)":
     Nae = (KnT * (1 + bnT * tc)) / (unmT_efetivo * (1 - fxm) * tc - (1 + bnT * tc))
     Nc = max(0.0, Nti - Nouse - Nae - Ns)
     K2T = K2_20 * (1.08 ** (T - 20))
 
-    # Potencial bruto de desnitrificação (sem desconto do OD recirculado)
     Dp1_bruto = Sbsi * ((1 - fcv * Yh) / 2.86) + (K2T * fxm * MXbh * 1000.0) / Q
 
     if fxm > 0 and Nc > 0:
-        # Equação quadrática exata de Marais & Ekama (WRC, 1984):
-        # Iguala carga de nitrato que entra no anóxico [(a + s) * Nc / (a + s + 1)]
-        # ao potencial efetivo [Dp1_bruto - (a * Oa + s * Os) / 2.86]
         B_eq = Dp1_bruto - (s * OD_recirc_lodo) / 2.86
         C_eq = OD_reator / 2.86
 
-        # C*a² + [Nc - B + C*(s + 1)]*a + [s*Nc - B*(s + 1)] = 0
         qa = C_eq
         qb = Nc - B_eq + C_eq * (s + 1.0)
         qc = s * Nc - B_eq * (s + 1.0)
@@ -176,14 +174,12 @@ if modo == "Remoção de Matéria Orgânica + N (MLE)":
         else:
             a_otimo = 0.0
 
-        # Aplica limites operacionais (0 <= a <= a_max)
+        recirc_limitada = a_otimo > a_max
         a = min(a_max, max(0.0, a_otimo))
 
-        # Penalidade real de nitrato devido ao OD carreado pelas recirculações (a e s)
         penalidade_OD_N = (a * OD_reator + s * OD_recirc_lodo) / 2.86
         Dp1_efetivo = max(0.0, Dp1_bruto - penalidade_OD_N)
 
-        # Nitrato efluente: o maior entre o limite hidráulico [Nc/(a+s+1)] e o estequiométrico [Nc - Dp1_efetivo]
         Nne_hidraulico = Nc / (a + s + 1.0)
         Nne_estequiometrico = max(0.0, Nc - Dp1_efetivo)
         Nne = max(Nne_hidraulico, Nne_estequiometrico)
@@ -301,6 +297,56 @@ N_NO3_ef = Nne
 NT_ef = Nouse + Nae + Nne + (fn * SST_ef * fv)
 P_ef = max(0.5, Pti - ((fp * MXv * 1000.0) / (Q * tc)) + (fp * SST_ef * fv))
 
+# --- ALERTAS DE LIMITE DE RECIRCULAÇÃO E META DE NITROGÊNIO TOTAL (MODO MLE) ---
+if modo == "Remoção de Matéria Orgânica + N (MLE)":
+    meta_NT_atingida = NT_ef <= NT_meta
+
+    if recirc_limitada:
+        st.info(
+            f"🔒 **Limite Prático de Recirculação Interna Aplicado:** O cálculo cinético sugeriu uma recirculação ótima de "
+            f"**{a_otimo:.2f} Q**, mas o sistema foi limitado ao teto operacional configurado de **{a_max:.1f} Q** "
+            f"(acima de 4,0 Q o ganho de remoção de nitrato é marginal frente ao custo de bombeamento e à perda de tempo de detenção anóxico)."
+        )
+
+    if not meta_NT_atingida:
+        deficit_N = NT_ef - NT_meta
+        # Diagnóstico da causa limitante (Hidráulica vs. Estequiométrica/Carbono)
+        causas_e_acoes = []
+        if Nne_hidraulico >= Nne_estequiometrico and fxm > 0:
+            causas_e_acoes.append(
+                "**Gargalo Hidráulico da Pré-Desnitrificação (MLE):** Mesmo com a recirculação interna no limite prático "
+                f"(a = {a:.1f} Q), a fração máxima teórica de nitrato que retorna ao tanque anóxico é [(a+s)/(a+s+1) = {(a+s)/(a+s+1)*100:.0f}%]. "
+                "Para atingir metas mais restritivas de NT sem exceder 4,0 Q, recomenda-se adotar uma **zona pós-anóxica (configuração Bardenpho de 4 estágios)** "
+                "ou **dosagem de fonte externa de carbono** (ex: metanol/etanol/acetato)."
+            )
+        else:
+            causas_e_acoes.append(
+                "**Gargalo de Potencial de Desnitrificação (Carbono/Volume Anóxico):** Falta capacidade de redução na zona anóxica "
+                f"(Dp1 efetivo = {Dp1_efetivo:.1f} mg/L para remover Nc = {Nc:.1f} mg/L). Para melhorar a remoção:
+"
+                "  1. **Aumente a fração mássica anóxica (fxm)** na barra lateral (até 0,35–0,40), se houver margem na idade do lodo;
+"
+                "  2. **Reduza o OD no tanque aeróbio (Oa)** para 1,5–2,0 mg/L e controle o OD no retorno de lodo (Os) para diminuir a penalidade de oxigênio na zona anóxica;
+"
+                "  3. Se a relação DQO/NTK do esgoto bruto for baixa (< 8–9), avalie a **adição de fonte externa de carbono** ou **zona pós-anóxica (Bardenpho)**."
+            )
+
+        st.error(
+            f"❌ **Meta de Nitrogênio Total Não Alcançada:** O Nitrogênio Total estimado no efluente é de **{NT_ef:.2f} mg N/L**, "
+            f"ficando **{deficit_N:.2f} mg N/L acima** da meta estabelecida de **{NT_meta:.1f} mg N/L** "
+            f"(N-NH₄ = {N_NH4_ef:.2f} | N-NO₃ = {N_NO3_ef:.2f} | N-org. solúvel = {Nouse:.2f} | N-particulado = {fn*SST_ef*fv:.2f} mg/L).
+
+"
+            + "
+
+".join(causas_e_acoes)
+        )
+    else:
+        st.success(
+            f"✅ **Meta de Nitrogênio Total Alcançada:** O Nitrogênio Total efluente estimado (**{NT_ef:.2f} mg N/L**) "
+            f"atende à meta de projeto de **{NT_meta:.1f} mg N/L** (folga de {NT_meta - NT_ef:.2f} mg N/L)."
+        )
+
 # --- ORGANIZAÇÃO EM ABAS ---
 aba_processo, aba_aeracao, aba_geometria, aba_cenarios = st.tabs([
     "📊 1. Processo e Efluente",
@@ -323,7 +369,8 @@ with aba_processo:
     col5, col6, col7, col8 = st.columns(4)
     col5.metric("Volume Anóxico", f"{Vanox:,.0f} m³", f"{fxm*100:.0f}% do total")
     col6.metric("Volume Aeróbio", f"{Vaer:,.0f} m³", f"{(1-fxm)*100:.0f}% do total")
-    col7.metric("Recirculação Interna (a)", f"{a:.2f} Q", f"Ótimo calc.: {a_otimo:.2f} Q (Qa={a*Q:,.0f} m³/d)")
+    sub_recirc = f"Limitada ao teto (calc: {a_otimo:.2f} Q)" if recirc_limitada else f"Ótimo calc.: {a_otimo:.2f} Q (Qa={a*Q:,.0f} m³/d)"
+    col7.metric("Recirculação Interna (a)", f"{a:.2f} Q", sub_recirc)
     col8.metric("Desnitrificação Efetiva (Dp1)", f"{Dp1_efetivo:.1f} mg N/L", f"Bruto: {Dp1_bruto:.1f} | Perda OD: -{penalidade_OD_N:.1f}")
 
     st.divider()
@@ -342,7 +389,7 @@ with aba_processo:
                 "Definido pela eficiência do decantador",
                 f"OD={OD_reator:.1f} mg/L (f_OD={f_OD_nit:.2f})" if modo.startswith("Remoção") else "Sem nitrificação no balanço",
                 f"Dp1 efetivo: {Dp1_efetivo:.1f} mg/L (perda OD: {penalidade_OD_N:.1f} mg/L)" if fxm > 0 else "Sem zona anóxica",
-                f"Orgânico solúvel residual: {Nouse:.1f} mg/L",
+                f"Meta: ≤ {NT_meta:.1f} mg/L ({'Atendida' if NT_ef <= NT_meta else 'Não atendida'})" if modo.startswith("Remoção") else f"Orgânico solúvel residual: {Nouse:.1f} mg/L",
                 "Assimilação celular convencional (sem EBPR)"
             ]
         })
@@ -471,8 +518,8 @@ with aba_geometria:
 with aba_cenarios:
     st.subheader("⚖️ Salvar e Comparar Diferentes Cenários de Projeto")
     st.markdown(
-        "A tabela abaixo compara **volumes, geometria, recirculação interna, aeração e toda a qualidade do efluente tratado (DBO₅, DQO, SST, N-NH₄, N-NO₃, NT e P)**. "
-        "Além disso, parâmetros cinéticos e de aeração aparecem automaticamente como colunas extras sempre que você alterá-los entre um cenário e outro."
+        "A tabela abaixo compara **volumes, geometria, recirculação interna, aeração, atendimento à meta de NT e toda a qualidade do efluente tratado**. "
+        "Parâmetros cinéticos e de aeração aparecem automaticamente como colunas extras sempre que você alterá-los entre um cenário e outro."
     )
 
     col_nome, col_btn_add, col_btn_clear = st.columns([2, 1, 1])
@@ -484,6 +531,10 @@ with aba_cenarios:
         st.write("")
         st.write("")
         if st.button("➕ Adicionar Cenário", use_container_width=True):
+            status_meta = "N/A"
+            if modo.startswith("Remoção"):
+                status_meta = f"OK (≤ {NT_meta:.0f})" if NT_ef <= NT_meta else f"Não atingida (> {NT_meta:.0f})"
+
             novo_cenario = {
                 "Cenário": nome_cenario,
                 "Modo": "MLE (C + N)" if modo.startswith("Remoção") else "Apenas C",
@@ -511,6 +562,7 @@ with aba_cenarios:
                 "N-NH₄ Ef. (mg/L)": round(N_NH4_ef, 1),
                 "N-NO₃ Ef. (mg/L)": round(N_NO3_ef, 1),
                 "NT Ef. (mg/L)": round(NT_ef, 1),
+                "Meta NT": status_meta,
                 "P Ef. (mg/L)": round(P_ef, 2),
                 "_params_extras": {
                     "DQO Af. (mg/L)": round(Sti, 0),
@@ -641,6 +693,7 @@ dados_export = [
     ("N-NH4 efluente", round(N_NH4_ef, 2), "mg N/L"),
     ("N-NO3 efluente", round(N_NO3_ef, 2), "mg N/L"),
     ("Nitrogênio Total efluente", round(NT_ef, 2), "mg N/L"),
+    ("Meta de Nitrogênio Total (NT_meta)", NT_meta if modo.startswith("Remoção") else "N/A", "mg N/L"),
     ("Fósforo Total efluente", round(P_ef, 2), "mg P/L")
 ]
 
