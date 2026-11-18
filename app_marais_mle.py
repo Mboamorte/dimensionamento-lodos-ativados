@@ -484,7 +484,6 @@ aba_processo, aba_aeracao, aba_geometria, aba_cenarios = st.tabs([
 # ABA 1: PROCESSO E QUALIDADE DO EFLUENTE
 # ==============================================================================
 with aba_processo:
-    # Identificação do Cenário logo no topo da Aba 1
     nome_padrao = f"Cenário {len(st.session_state.cenarios) + 1} ({'MLE' if modo.startswith('Remoção') else 'Convencional'} - θc {tc:.1f}d)"
     col_id_cen, col_btn_save_aba1 = st.columns([2.5, 1])
     with col_id_cen:
@@ -492,7 +491,7 @@ with aba_processo:
             "🏷️ Identificação / Nome do Cenário Atual:",
             value=nome_padrao,
             key="nome_cenario_aba1",
-            help="Dê um nome a este cenário antes ou durante a simulação para identificá-lo no memorial e no comparador."
+            help="Defina o nome do cenário aqui. Ele identificará o projeto em todas as abas, no Excel e ao salvar no comparador."
         )
     with col_btn_save_aba1:
         st.write("")
@@ -667,32 +666,11 @@ with aba_geometria:
 # ABA 4: COMPARADOR INTELIGENTE DE CENÁRIOS
 # ==============================================================================
 with aba_cenarios:
-    st.subheader("⚖️ Salvar e Comparar Diferentes Cenários de Projeto")
+    st.subheader("⚖️ Comparador de Cenários Salvos")
     st.markdown(
         "A tabela abaixo compara **volumes, geometria, recirculação interna, aeração, atendimento à meta de NT e toda a qualidade do efluente tratado**. "
         "Parâmetros cinéticos e de aeração aparecem automaticamente como colunas extras sempre que você alterá-los entre um cenário e outro."
     )
-
-    col_nome, col_btn_add, col_btn_clear = st.columns([2, 1, 1])
-    with col_nome:
-        nome_cenario_aba4 = st.text_input(
-            "Nome do cenário para salvar (sincronizado com a Aba 1):",
-            value=nome_cenario_ativo
-        )
-
-    with col_btn_add:
-        st.write("")
-        st.write("")
-        if st.button("➕ Adicionar Cenário", key="btn_salvar_aba4", use_container_width=True):
-            salvar_cenario_atual(nome_cenario_aba4)
-            st.success(f"'{nome_cenario_aba4}' adicionado à comparação!")
-
-    with col_btn_clear:
-        st.write("")
-        st.write("")
-        if st.button("🗑️ Limpar Lista", use_container_width=True):
-            st.session_state.cenarios = []
-            st.rerun()
 
     if st.session_state.cenarios:
         cenarios_validos = [c for c in st.session_state.cenarios if "_params_extras" in c]
@@ -700,6 +678,14 @@ with aba_cenarios:
             st.session_state.cenarios = cenarios_validos
 
     if st.session_state.cenarios:
+        col_info_cen, col_btn_clear = st.columns([3, 1])
+        with col_info_cen:
+            st.caption(f"Total de cenários salvos na comparação: **{len(st.session_state.cenarios)}** (para salvar novos cenários, utilize a **Aba 1**).")
+        with col_btn_clear:
+            if st.button("🗑️ Limpar Lista de Cenários", use_container_width=True):
+                st.session_state.cenarios = []
+                st.rerun()
+
         chaves_extras = list(st.session_state.cenarios[0].get("_params_extras", {}).keys())
         colunas_variadas = []
         for k in chaves_extras:
@@ -732,7 +718,7 @@ with aba_cenarios:
             st.markdown("**Efluente Tratado: DBO₅, N-NH₄, N-NO₃ e NT (mg/L)**")
             st.bar_chart(df_cenarios.set_index("Cenário")[["DBO₅ Ef. (mg/L)", "N-NH₄ Ef. (mg/L)", "N-NO₃ Ef. (mg/L)", "NT Ef. (mg/L)"]])
     else:
-        st.info("Nenhum cenário salvo ainda. Clique em **'💾 Salvar no Comparador'** na Aba 1 ou em **'➕ Adicionar Cenário'** acima para começar a comparar.")
+        st.info("Nenhum cenário salvo ainda. Defina o nome e clique em **'💾 Salvar no Comparador'** no topo da **Aba 1 (Processo e Efluente)** para começar a comparar.")
 
 # --- EXPORTAÇÃO PARA EXCEL ---
 st.divider()
