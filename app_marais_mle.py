@@ -15,6 +15,47 @@ if "cenarios" not in st.session_state:
 def arredondar_025(valor):
     return math.ceil(valor / 0.25) * 0.25
 
+def input_sincronizado(label, min_val, max_val, default_val, step, key_base, fmt="%.2f", help_text=None):
+    """Cria um controle híbrido sincronizado: barra deslizante (slider) + caixa numérica precisa."""
+    k_num = f"{key_base}_num"
+    k_sld = f"{key_base}_sld"
+
+    if k_num not in st.session_state:
+        st.session_state[k_num] = default_val
+    if k_sld not in st.session_state:
+        st.session_state[k_sld] = default_val
+
+    def _sync_from_slider():
+        st.session_state[k_num] = st.session_state[k_sld]
+
+    def _sync_from_num():
+        st.session_state[k_sld] = st.session_state[k_num]
+
+    st.sidebar.markdown(f"**{label}**", help=help_text)
+    col_sld, col_num = st.sidebar.columns([1.6, 1.0])
+    with col_sld:
+        st.slider(
+            label,
+            min_value=min_val,
+            max_value=max_val,
+            step=step,
+            key=k_sld,
+            on_change=_sync_from_slider,
+            label_visibility="collapsed"
+        )
+    with col_num:
+        st.number_input(
+            label,
+            min_value=min_val,
+            max_value=max_val,
+            step=step,
+            format=fmt,
+            key=k_num,
+            on_change=_sync_from_num,
+            label_visibility="collapsed"
+        )
+    return st.session_state[k_num]
+
 st.title("💧 Dimensionamento Estático de Lodos Ativados")
 st.markdown("Modelo estacionário de **Marais & Ekama (UCT)** com aeração por **ar difuso**, geometria e comparador inteligente de cenários.")
 
@@ -35,12 +76,12 @@ Sti = st.sidebar.number_input("DQO total afluente (Sti) [mg/L]", min_value=50.0,
 Nti = st.sidebar.number_input("NTK afluente (Nti) [mg N/L]", min_value=5.0, value=50.0, step=1.0)
 Pti = st.sidebar.number_input("Fósforo Total afluente (Pti) [mg P/L]", min_value=0.5, value=8.0, step=0.5)
 Xioi = st.sidebar.number_input("Sólidos Suspensos Inorgânicos (Xioi) [mg/L]", min_value=0.0, value=30.0, step=5.0)
-T = st.sidebar.slider("Temperatura mínima de projeto (T) [°C]", min_value=10.0, max_value=30.0, value=20.0, step=0.5)
+T = input_sincronizado("Temperatura mínima de projeto (T) [°C]", 10.0, 30.0, 20.0, 0.5, "temp_proj", fmt="%.1f")
 
 st.sidebar.header("2. Fracionamento da DQO")
-fbs = st.sidebar.slider("Fração biodegradável solúvel (fbs)", 0.05, 0.50, 0.25, 0.01)
-fbp = st.sidebar.slider("Fração biodegradável particulada (fbp)", 0.20, 0.70, 0.50, 0.01)
-fus = st.sidebar.slider("Fração inerte solúvel (fus)", 0.02, 0.25, 0.08, 0.01)
+fbs = input_sincronizado("Fração biodegradável solúvel (fbs)", 0.05, 0.50, 0.25, 0.01, "fbs", fmt="%.2f")
+fbp = input_sincronizado("Fração biodegradável particulada (fbp)", 0.20, 0.70, 0.50, 0.01, "fbp", fmt="%.2f")
+fus = input_sincronizado("Fração inerte solúvel (fus)", 0.02, 0.25, 0.08, 0.01, "fus", fmt="%.2f")
 fup = round(1.0 - (fbs + fbp + fus), 4)
 
 if fup < 0:
@@ -52,15 +93,15 @@ else:
 st.sidebar.header("3. Parâmetros Operacionais e de Projeto")
 Xt = st.sidebar.number_input("SST desejado no reator (Xt) [mg/L]", min_value=1500.0, value=3500.0, step=100.0)
 Xte = st.sidebar.number_input("SST esperado no efluente (Xte) [mg/L]", min_value=5.0, value=15.0, step=1.0)
-s = st.sidebar.slider("Razão de recirculação de lodo (s = Qr/Q)", 0.25, 1.50, 0.75, 0.05)
+s = input_sincronizado("Razão de recirculação de lodo (s = Qr/Q)", 0.25, 1.50, 0.75, 0.05, "recirc_s", fmt="%.2f")
 
 if modo == "Remoção de Matéria Orgânica + N (MLE)":
-    fxm = st.sidebar.slider("Fração mássica anóxica (fxm)", 0.00, 0.45, 0.30, 0.01)
-    Sf = st.sidebar.slider("Fator de segurança nitrificação (Sf)", 1.10, 2.00, 1.35, 0.05)
+    fxm = input_sincronizado("Fração mássica anóxica (fxm)", 0.00, 0.45, 0.30, 0.01, "fxm", fmt="%.2f")
+    Sf = input_sincronizado("Fator de segurança nitrificação (Sf)", 1.10, 2.00, 1.35, 0.05, "sf_nit", fmt="%.2f")
     Na_alvo = st.sidebar.number_input("Amônia alvo para projeto (Na_alvo) [mg N/L]", min_value=0.5, value=1.5, step=0.1)
     Nne_alvo = st.sidebar.number_input("Nitrato alvo no efluente (Nne_alvo) [mg N/L]", min_value=1.0, max_value=40.0, value=8.0, step=0.5)
     NT_meta = st.sidebar.number_input("Meta de Nitrogênio Total efluente (NT_meta) [mg N/L]", min_value=1.0, max_value=50.0, value=12.0, step=0.5)
-    a_max = st.sidebar.slider("Limite máximo recirculação interna (a_max)", 1.0, 6.0, 4.0, 0.5)
+    a_max = input_sincronizado("Limite máximo recirculação interna (a_max)", 1.0, 6.0, 4.0, 0.5, "a_max", fmt="%.1f")
     OD_recirc_lodo = st.sidebar.number_input("OD no retorno de lodo (Os) [mg/L]", min_value=0.0, max_value=3.0, value=1.0, step=0.1)
 else:
     fxm = 0.0
@@ -68,30 +109,30 @@ else:
     NT_meta = 0.0
     a_max = 0.0
     OD_recirc_lodo = 0.0
-    tc_manual = st.sidebar.slider("Idade do lodo adotada (θc) [dias]", 2.0, 25.0, 5.0, 0.5)
+    tc_manual = input_sincronizado("Idade do lodo adotada (θc) [dias]", 2.0, 25.0, 5.0, 0.5, "tc_man", fmt="%.1f")
     st.sidebar.info("Modo sem nitrificação: zona anóxica zerada (fxm = 0,00) e idade do lodo definida diretamente.")
 
 st.sidebar.header("4. Geometria dos Tanques")
 num_modulos = st.sidebar.number_input("Número de linhas / módulos em paralelo", min_value=1, max_value=10, value=2, step=1)
-prof_util = st.sidebar.slider("Profundidade útil (H) [m]", min_value=3.0, max_value=7.0, value=4.5, step=0.25)
-borda_livre = st.sidebar.slider("Borda livre [m]", min_value=0.30, max_value=1.00, value=0.50, step=0.05)
+prof_util = input_sincronizado("Profundidade útil (H) [m]", 3.0, 7.0, 4.5, 0.25, "prof_util", fmt="%.2f")
+borda_livre = input_sincronizado("Borda livre [m]", 0.30, 1.00, 0.50, 0.05, "borda_livre", fmt="%.2f")
 rel_LB_aer = st.sidebar.selectbox("Relação Comprimento/Largura (L:B) - Zona Aeróbia", [1.0, 1.5, 2.0, 2.5, 3.0], index=2)
 rel_LB_anox = st.sidebar.selectbox("Relação Comprimento/Largura (L:B) - Zona Anóxica", [1.0, 1.5, 2.0], index=0)
 
 st.sidebar.header("5. Sistema de Aeração (Ar Difuso)")
-OD_reator = st.sidebar.slider("OD desejado no tanque aeróbio (Oa / CL) [mg/L]", 1.0, 4.0, 2.0, 0.1)
+OD_reator = input_sincronizado("OD desejado no tanque aeróbio (Oa / CL) [mg/L]", 1.0, 4.0, 2.0, 0.1, "od_reator", fmt="%.1f")
 altitude = st.sidebar.number_input("Altitude da ETE [m]", min_value=0.0, max_value=2500.0, value=900.0, step=50.0)
 submergencia = st.sidebar.number_input("Submergência dos difusores [m]", min_value=2.5, max_value=6.8, value=round(prof_util - 0.30, 2), step=0.10)
-SOTE_m = st.sidebar.slider("Eficiência padrão (SOTE) por metro [%/m]", 4.0, 8.0, 6.0, 0.2)
-alfa = st.sidebar.slider("Fator α (transferência esgoto/água limpa)", 0.40, 0.85, 0.55, 0.05)
-beta = st.sidebar.slider("Fator β (saturação esgoto/água limpa)", 0.90, 1.00, 0.95, 0.01)
-F_incrust = st.sidebar.slider("Fator de incrustação dos difusores (F)", 0.70, 1.00, 0.85, 0.05)
+SOTE_m = input_sincronizado("Eficiência padrão (SOTE) por metro [%/m]", 4.0, 8.0, 6.0, 0.2, "sote_m", fmt="%.1f")
+alfa = input_sincronizado("Fator α (transferência esgoto/água limpa)", 0.40, 0.85, 0.55, 0.05, "alfa", fmt="%.2f")
+beta = input_sincronizado("Fator β (saturação esgoto/água limpa)", 0.90, 1.00, 0.95, 0.01, "beta", fmt="%.2f")
+F_incrust = input_sincronizado("Fator de incrustação dos difusores (F)", 0.70, 1.00, 0.85, 0.05, "f_incrust", fmt="%.2f")
 taxa_min_mistura = st.sidebar.number_input(
     "Taxa mínima de mistura (ar difuso) [Nm³/min·1000m³]",
     min_value=10.0, max_value=30.0, value=20.0, step=1.0,
     help="Faixa típica de 20 a 30 Nm³/min por 1.000 m³ (Metcalf & Eddy, 5ª ed.) ou 1,2 a 1,8 Nm³/h·m² (ATV-DVWK-A 131)."
 )
-ef_soprador = st.sidebar.slider("Eficiência global do conjunto motor-soprador [%]", 55.0, 80.0, 68.0, 1.0) / 100.0
+ef_soprador = input_sincronizado("Eficiência global do conjunto motor-soprador [%]", 55.0, 80.0, 68.0, 1.0, "ef_sopr", fmt="%.1f") / 100.0
 perda_carga_ar = st.sidebar.number_input("Perda de carga tubulação + difusor [m.c.a.]", min_value=0.3, max_value=2.5, value=0.8, step=0.1)
 
 with st.sidebar.expander("6. Parâmetros Cinéticos (Padrão Marais/UCT)"):
@@ -164,17 +205,14 @@ if modo == "Remoção de Matéria Orgânica + N (MLE)":
     Nc = max(0.0, Nti - Nouse - Nae - Ns)
     K2T = K2_20 * (1.08 ** (T - 20))
 
-    # Potencial bruto de desnitrificação da zona anóxica (mg N/L)
     Dp1_bruto = Sbsi * ((1 - fcv * Yh) / 2.86) + (K2T * fxm * MXbh * 1000.0) / Q
 
     if fxm > 0 and Nc > 0:
-        # 1. Calcular a recirculação necessária para atingir o Nne_alvo (balanço hidráulico)
         if Nc <= Nne_alvo:
             a_necessario = 0.0
         else:
             a_necessario = max(0.0, (Nc / Nne_alvo) - (1.0 + s))
 
-        # 2. Calcular o teto cinético (a_otimo_cinetico): ponto máximo onde a zona anóxica ainda tem Dp1 suficiente
         B_eq = Dp1_bruto - (s * OD_recirc_lodo) / 2.86
         C_eq = OD_reator / 2.86
 
@@ -188,20 +226,15 @@ if modo == "Remoção de Matéria Orgânica + N (MLE)":
         else:
             a_otimo_cinetico = 0.0
 
-        # 3. Decisão de projeto: comparar a_necessario com o limite cinético (Dp1) e o limite físico (a_max)
         if a_necessario > a_otimo_cinetico and a_otimo_cinetico < a_max:
-            # Gargalo está na zona anóxica (falta DQO ou volume fxm), não na bomba de recirculação
             gargalo_zona_anoxica = True
             a = a_otimo_cinetico
         elif a_necessario > a_max:
-            # Gargalo está no limite máximo de bombeamento estabelecido (a_max)
             recirc_limitada_amax = True
             a = a_max
         else:
-            # O alvo Nne_alvo é viável dentro dos limites cinéticos e hidráulicos
             a = a_necessario
 
-        # 4. Recalcular Dp1 efetivo e Nne real alcançado com o 'a' adotado
         penalidade_OD_N = (a * OD_reator + s * OD_recirc_lodo) / 2.86
         Dp1_efetivo = max(0.0, Dp1_bruto - penalidade_OD_N)
 
@@ -373,6 +406,72 @@ if modo == "Remoção de Matéria Orgânica + N (MLE)":
 
         st.error(chr(10).join(partes_msg))
 
+def salvar_cenario_atual(nome_para_salvar):
+    status_meta = "N/A"
+    if modo.startswith("Remoção"):
+        status_meta = f"OK (≤ {NT_meta:.0f})" if NT_ef <= NT_meta else f"Não atingida (> {NT_meta:.0f})"
+
+    novo_cenario = {
+        "Cenário": nome_para_salvar,
+        "Modo": "MLE (C + N)" if modo.startswith("Remoção") else "Apenas C",
+        "Q (L/s)": round(Q_Ls, 2),
+        "Q (m³/d)": round(Q, 1),
+        "T (°C)": T,
+        "OD (mg/L)": OD_reator,
+        "θc (dias)": round(tc, 1),
+        "fxm": round(fxm, 2),
+        "Recirc. a": round(a, 2),
+        "Dp1 Ef. (mg/L)": round(Dp1_efetivo, 1),
+        "Vt Real (m³)": round(Vt_real_total, 0),
+        "Área Planta (m²)": round(Area_planta_total, 1),
+        "Dim. Aeróbio (m)": f"{num_modulos}x({B_aer:.2f}x{L_aer:.2f})",
+        "Dim. Anóxico (m)": f"{num_modulos}x({B_anox:.2f}x{L_anox:.2f})" if Vanox > 0 else "-",
+        "AOR (kg O₂/d)": round(FOt, 0),
+        "Ar Demanda (Nm³/h)": round(Q_ar_demanda_Nm3_h, 0),
+        "Ar Projeto (Nm³/h)": round(Q_ar_projeto_Nm3_h, 0),
+        "Critério Ar": "Mistura Mín." if governado_por_mistura else "Demanda O₂",
+        "Potência (kW)": round(Potencia_kW, 1),
+        "Px Lodo (kg/d)": round(Px_SST, 0),
+        "DBO₅ Ef. (mg/L)": round(DBO_ef, 1),
+        "DQO Ef. (mg/L)": round(DQO_ef, 1),
+        "SST Ef. (mg/L)": round(SST_ef, 1),
+        "N-NH₄ Ef. (mg/L)": round(N_NH4_ef, 1),
+        "N-NO₃ Ef. (mg/L)": round(N_NO3_ef, 1),
+        "NT Ef. (mg/L)": round(NT_ef, 1),
+        "Meta NT": status_meta,
+        "P Ef. (mg/L)": round(P_ef, 2),
+        "_params_extras": {
+            "DQO Af. (mg/L)": round(Sti, 0),
+            "NTK Af. (mg/L)": round(Nti, 0),
+            "P Af. (mg/L)": round(Pti, 1),
+            "fbs": round(fbs, 2),
+            "fbp": round(fbp, 2),
+            "fus": round(fus, 2),
+            "Xt (mg/L)": round(Xt, 0),
+            "s (Qr/Q)": round(s, 2),
+            "Nne Alvo": round(Nne_alvo, 1),
+            "a_max": round(a_max, 1),
+            "OD Lodo Os": round(OD_recirc_lodo, 1),
+            "Yh": round(Yh, 3),
+            "bh20 (d⁻¹)": round(bh20, 3),
+            "f (endóg.)": round(f, 2),
+            "fcv": round(fcv, 2),
+            "fn": round(fn, 3),
+            "fp": round(fp, 3),
+            "μnm20 (d⁻¹)": round(unm20, 3),
+            "Kn20 (mg/L)": round(Kn20, 2),
+            "bn20 (d⁻¹)": round(bn20, 3),
+            "K2_20": round(K2_20, 3),
+            "SOTE (%/m)": round(SOTE_m, 1),
+            "Fator α": round(alfa, 2),
+            "Fator F": round(F_incrust, 2),
+            "Taxa Mistura": round(taxa_min_mistura, 1),
+            "Submerg. (m)": round(submergencia, 2),
+            "Prof. H (m)": round(prof_util, 2),
+        }
+    }
+    st.session_state.cenarios.append(novo_cenario)
+
 # --- ORGANIZAÇÃO EM ABAS ---
 aba_processo, aba_aeracao, aba_geometria, aba_cenarios = st.tabs([
     "📊 1. Processo e Efluente",
@@ -385,7 +484,26 @@ aba_processo, aba_aeracao, aba_geometria, aba_cenarios = st.tabs([
 # ABA 1: PROCESSO E QUALIDADE DO EFLUENTE
 # ==============================================================================
 with aba_processo:
-    st.subheader("Principais Resultados do Dimensionamento Biológico")
+    # Identificação do Cenário logo no topo da Aba 1
+    nome_padrao = f"Cenário {len(st.session_state.cenarios) + 1} ({'MLE' if modo.startswith('Remoção') else 'Convencional'} - θc {tc:.1f}d)"
+    col_id_cen, col_btn_save_aba1 = st.columns([2.5, 1])
+    with col_id_cen:
+        nome_cenario_ativo = st.text_input(
+            "🏷️ Identificação / Nome do Cenário Atual:",
+            value=nome_padrao,
+            key="nome_cenario_aba1",
+            help="Dê um nome a este cenário antes ou durante a simulação para identificá-lo no memorial e no comparador."
+        )
+    with col_btn_save_aba1:
+        st.write("")
+        st.write("")
+        if st.button("💾 Salvar no Comparador", key="btn_salvar_aba1", use_container_width=True):
+            salvar_cenario_atual(nome_cenario_ativo)
+            st.success(f"Cenário '{nome_cenario_ativo}' salvo na Aba 4!")
+
+    st.divider()
+
+    st.subheader(f"Principais Resultados — {nome_cenario_ativo}")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Vazão de Projeto (Q)", f"{Q:,.1f} m³/d", f"Entrada: {Q_Ls:.2f} L/s")
     col2.metric("Idade do Lodo (θc)", f"{tc:.1f} dias", f"Mín. nitrif.: {tc_min:.1f} d")
@@ -440,7 +558,7 @@ with aba_processo:
 # ABA 2: AERAÇÃO POR AR DIFUSO
 # ==============================================================================
 with aba_aeracao:
-    st.subheader("🌬️ Dimensionamento do Sistema de Ar Difuso e Sopradores")
+    st.subheader(f"🌬️ Dimensionamento do Sistema de Ar Difuso e Sopradores — {nome_cenario_ativo}")
     st.markdown(
         f"Cálculo de transferência de oxigênio em campo (**AOR → SOTR**) considerando submergência de **{submergencia:.2f} m**, "
         f"altitude de **{altitude:.0f} m** e concentração de OD mantida em **{OD_reator:.1f} mg/L**."
@@ -493,7 +611,7 @@ with aba_aeracao:
 # ABA 3: PRÉ-DIMENSIONAMENTO GEOMÉTRICO
 # ==============================================================================
 with aba_geometria:
-    st.subheader(f"📐 Pré-Dimensionamento Geométrico ({num_modulos} linha(s) em paralelo)")
+    st.subheader(f"📐 Pré-Dimensionamento Geométrico ({num_modulos} linha(s) em paralelo) — {nome_cenario_ativo}")
     st.markdown(
         f"Dimensões em planta arredondadas para cima em **múltiplos de 0,25 m**, considerando "
         f"**profundidade útil (H) = {prof_util:.2f} m** e **altura total = {H_total:.2f} m** (com borda livre de {borda_livre:.2f} m)."
@@ -557,78 +675,17 @@ with aba_cenarios:
 
     col_nome, col_btn_add, col_btn_clear = st.columns([2, 1, 1])
     with col_nome:
-        nome_padrao = f"Cenário {len(st.session_state.cenarios) + 1} ({'MLE' if modo.startswith('Remoção') else 'Convencional'} - θc {tc:.1f}d)"
-        nome_cenario = st.text_input("Nome do cenário para salvar:", value=nome_padrao)
+        nome_cenario_aba4 = st.text_input(
+            "Nome do cenário para salvar (sincronizado com a Aba 1):",
+            value=nome_cenario_ativo
+        )
 
     with col_btn_add:
         st.write("")
         st.write("")
-        if st.button("➕ Adicionar Cenário", use_container_width=True):
-            status_meta = "N/A"
-            if modo.startswith("Remoção"):
-                status_meta = f"OK (≤ {NT_meta:.0f})" if NT_ef <= NT_meta else f"Não atingida (> {NT_meta:.0f})"
-
-            novo_cenario = {
-                "Cenário": nome_cenario,
-                "Modo": "MLE (C + N)" if modo.startswith("Remoção") else "Apenas C",
-                "Q (L/s)": round(Q_Ls, 2),
-                "Q (m³/d)": round(Q, 1),
-                "T (°C)": T,
-                "OD (mg/L)": OD_reator,
-                "θc (dias)": round(tc, 1),
-                "fxm": round(fxm, 2),
-                "Recirc. a": round(a, 2),
-                "Dp1 Ef. (mg/L)": round(Dp1_efetivo, 1),
-                "Vt Real (m³)": round(Vt_real_total, 0),
-                "Área Planta (m²)": round(Area_planta_total, 1),
-                "Dim. Aeróbio (m)": f"{num_modulos}x({B_aer:.2f}x{L_aer:.2f})",
-                "Dim. Anóxico (m)": f"{num_modulos}x({B_anox:.2f}x{L_anox:.2f})" if Vanox > 0 else "-",
-                "AOR (kg O₂/d)": round(FOt, 0),
-                "Ar Demanda (Nm³/h)": round(Q_ar_demanda_Nm3_h, 0),
-                "Ar Projeto (Nm³/h)": round(Q_ar_projeto_Nm3_h, 0),
-                "Critério Ar": "Mistura Mín." if governado_por_mistura else "Demanda O₂",
-                "Potência (kW)": round(Potencia_kW, 1),
-                "Px Lodo (kg/d)": round(Px_SST, 0),
-                "DBO₅ Ef. (mg/L)": round(DBO_ef, 1),
-                "DQO Ef. (mg/L)": round(DQO_ef, 1),
-                "SST Ef. (mg/L)": round(SST_ef, 1),
-                "N-NH₄ Ef. (mg/L)": round(N_NH4_ef, 1),
-                "N-NO₃ Ef. (mg/L)": round(N_NO3_ef, 1),
-                "NT Ef. (mg/L)": round(NT_ef, 1),
-                "Meta NT": status_meta,
-                "P Ef. (mg/L)": round(P_ef, 2),
-                "_params_extras": {
-                    "DQO Af. (mg/L)": round(Sti, 0),
-                    "NTK Af. (mg/L)": round(Nti, 0),
-                    "P Af. (mg/L)": round(Pti, 1),
-                    "fbs": round(fbs, 2),
-                    "fbp": round(fbp, 2),
-                    "fus": round(fus, 2),
-                    "Xt (mg/L)": round(Xt, 0),
-                    "s (Qr/Q)": round(s, 2),
-                    "Nne Alvo": round(Nne_alvo, 1),
-                    "a_max": round(a_max, 1),
-                    "OD Lodo Os": round(OD_recirc_lodo, 1),
-                    "Yh": round(Yh, 3),
-                    "bh20 (d⁻¹)": round(bh20, 3),
-                    "f (endóg.)": round(f, 2),
-                    "fcv": round(fcv, 2),
-                    "fn": round(fn, 3),
-                    "fp": round(fp, 3),
-                    "μnm20 (d⁻¹)": round(unm20, 3),
-                    "Kn20 (mg/L)": round(Kn20, 2),
-                    "bn20 (d⁻¹)": round(bn20, 3),
-                    "K2_20": round(K2_20, 3),
-                    "SOTE (%/m)": round(SOTE_m, 1),
-                    "Fator α": round(alfa, 2),
-                    "Fator F": round(F_incrust, 2),
-                    "Taxa Mistura": round(taxa_min_mistura, 1),
-                    "Submerg. (m)": round(submergencia, 2),
-                    "Prof. H (m)": round(prof_util, 2),
-                }
-            }
-            st.session_state.cenarios.append(novo_cenario)
-            st.success(f"'{nome_cenario}' adicionado à comparação!")
+        if st.button("➕ Adicionar Cenário", key="btn_salvar_aba4", use_container_width=True):
+            salvar_cenario_atual(nome_cenario_aba4)
+            st.success(f"'{nome_cenario_aba4}' adicionado à comparação!")
 
     with col_btn_clear:
         st.write("")
@@ -675,13 +732,14 @@ with aba_cenarios:
             st.markdown("**Efluente Tratado: DBO₅, N-NH₄, N-NO₃ e NT (mg/L)**")
             st.bar_chart(df_cenarios.set_index("Cenário")[["DBO₅ Ef. (mg/L)", "N-NH₄ Ef. (mg/L)", "N-NO₃ Ef. (mg/L)", "NT Ef. (mg/L)"]])
     else:
-        st.info("Nenhum cenário salvo ainda. Clique em **'➕ Adicionar Cenário'** acima para começar a comparar.")
+        st.info("Nenhum cenário salvo ainda. Clique em **'💾 Salvar no Comparador'** na Aba 1 ou em **'➕ Adicionar Cenário'** acima para começar a comparar.")
 
 # --- EXPORTAÇÃO PARA EXCEL ---
 st.divider()
 st.subheader("📥 Exportar Memorial Completo, Ar Difuso e Cenários")
 
 dados_export = [
+    ("Identificação do Cenário", nome_cenario_ativo, "-"),
     ("Modo de operação", modo, "-"),
     ("Vazão afluente (entrada)", round(Q_Ls, 2), "L/s"),
     ("Vazão afluente (convertida)", round(Q, 1), "m³/d"),
