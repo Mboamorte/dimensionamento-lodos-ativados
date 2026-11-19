@@ -93,7 +93,29 @@ else:
 st.sidebar.header("3. Parâmetros Operacionais e de Projeto")
 Xt = st.sidebar.number_input("SST desejado no reator (Xt) [mg/L]", min_value=1500.0, value=3500.0, step=100.0)
 Xte = st.sidebar.number_input("SST esperado no efluente (Xte) [mg/L]", min_value=5.0, value=15.0, step=1.0)
-s = input_sincronizado("Razão de recirculação de lodo (s = Qr/Q)", 0.25, 1.50, 0.75, 0.05, "recirc_s", fmt="%.2f")
+
+modo_s = st.sidebar.radio(
+    "Definição da recirculação de lodo (s = Qr/Q):",
+    ["Calcular pelo adensamento (Xr)", "Definir manualmente"],
+    horizontal=True
+)
+
+if modo_s == "Calcular pelo adensamento (Xr)":
+    Xr_min = float(Xt + 1000.0)
+    Xr_default = max(8000.0, Xr_min)
+    Xr = st.sidebar.number_input(
+        "SST no lodo de retorno (Xr) [mg/L]",
+        min_value=Xr_min,
+        max_value=16000.0,
+        value=Xr_default,
+        step=500.0,
+        help="Concentração de sólidos no fundo do decantador. Típico: 7.000 a 10.000 mg/L (≈ 10⁶ / IVL)."
+    )
+    s = Xt / (Xr - Xt)
+    st.sidebar.info(f"Recirculação calculada (s = Qr/Q): **{s:.2f}** (Qr = {s*Q:,.0f} m³/d)")
+else:
+    s = input_sincronizado("Razão de recirculação de lodo (s = Qr/Q)", 0.25, 1.50, 0.75, 0.05, "recirc_s", fmt="%.2f")
+    Xr = Xt * (1.0 + 1.0 / s)
 
 if modo == "Remoção de Matéria Orgânica + N (MLE)":
     fxm = input_sincronizado("Fração mássica anóxica (fxm)", 0.00, 0.45, 0.30, 0.01, "fxm", fmt="%.2f")
@@ -420,6 +442,7 @@ def salvar_cenario_atual(nome_para_salvar):
         "OD (mg/L)": OD_reator,
         "θc (dias)": round(tc, 1),
         "fxm": round(fxm, 2),
+        "Recirc. s": round(s, 2),
         "Recirc. a": round(a, 2),
         "Dp1 Ef. (mg/L)": round(Dp1_efetivo, 1),
         "Vt Real (m³)": round(Vt_real_total, 0),
@@ -448,7 +471,7 @@ def salvar_cenario_atual(nome_para_salvar):
             "fbp": round(fbp, 2),
             "fus": round(fus, 2),
             "Xt (mg/L)": round(Xt, 0),
-            "s (Qr/Q)": round(s, 2),
+            "Xr (mg/L)": round(Xr, 0),
             "Nne Alvo": round(Nne_alvo, 1),
             "a_max": round(a_max, 1),
             "OD Lodo Os": round(OD_recirc_lodo, 1),
@@ -736,6 +759,8 @@ dados_export = [
     ("OD desejado no tanque aeróbio (Oa)", OD_reator, "mg/L"),
     ("OD no retorno de lodo (Os)", OD_recirc_lodo, "mg/L"),
     ("Idade do lodo de projeto (θc)", round(tc, 2), "dias"),
+    ("SST no reator (Xt)", Xt, "mg/L"),
+    ("SST no lodo de retorno (Xr)", round(Xr, 0), "mg/L"),
     ("Massa total de SST no reator (MXt)", round(MXt, 1), "kg SST"),
     ("Relação SSV/SST (fv)", round(fv, 3), "-"),
     ("Volume total calculado (Vt)", round(Vt, 1), "m³"),
@@ -756,7 +781,7 @@ dados_export = [
     ("Razão recirculação interna necessária (a_req)", round(a_necessario, 2), "-"),
     ("Razão recirculação interna teto cinético (a_cinético)", round(a_otimo_cinetico, 2), "-"),
     ("Razão recirculação interna adotada (a)", round(a, 2), "-"),
-    ("Razão recirculação de lodo (s)", round(s, 2), "-"),
+    ("Razão recirculação de lodo (s = Qr/Q)", round(s, 2), "-"),
     ("Demanda real de oxigênio (AOR / FOt)", round(FOt, 1), "kg O2/d"),
     ("Demanda padrão de oxigênio (SOTR)", round(SOTR, 1), "kg O2/d"),
     ("Eficiência transferência campo (AOTE)", round(AOTE * 100, 2), "%"),
